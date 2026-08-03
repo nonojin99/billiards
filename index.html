@@ -142,7 +142,8 @@
       letter-spacing: 0.28em; color: #fbbf24;
       font-family: ui-monospace, monospace; display: none;
     }
-    .lobby-card .btn-row { display: flex; gap: 10px; margin-top: 22px; }
+    .lobby-card .btn-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+    .lobby-card .btn-row button { min-width: 30%; flex: 1 1 30%; }
     .lobby-card button {
       flex: 1; padding: 13px 12px; border: none; border-radius: 10px;
       font-weight: 650; cursor: pointer; font-size: 0.92rem;
@@ -357,8 +358,9 @@
       </div>
       <div class="room-code-display" id="room-code-view"></div>
       <div class="btn-row">
-        <button class="btn-secondary" type="button" id="btn-join-local">빠른 시작</button>
-        <button class="btn-primary" type="button" id="btn-create">방 만들고 시작</button>
+        <button class="btn-secondary" type="button" id="btn-join-local">빠른 시작 (로컬)</button>
+        <button class="btn-secondary" type="button" id="btn-join-online">방 참가</button>
+        <button class="btn-primary" type="button" id="btn-create">방 만들기 (온라인)</button>
       </div>
       <p class="lobby-footer" id="lobby-rule-hint">4구: 빨강+노랑 동시 접촉 = 득점</p>
     </div>
@@ -413,7 +415,8 @@
     "imports": {
       "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
       "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
-      "@dimforge/rapier3d-compat": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/rapier.es.js"
+      "@dimforge/rapier3d-compat": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/rapier.es.js",
+      "@supabase/supabase-js": "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm"
     }
   }
   </script>
@@ -422,6 +425,7 @@
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import RAPIER from '@dimforge/rapier3d-compat';
+    import { createClient } from '@supabase/supabase-js';
 
     // ========== Constants ==========
     const TABLE_LENGTH = 2.54;
@@ -467,6 +471,17 @@
     let playerNames = { 1: 'Player1', 2: 'Player2' };
     let gameMode = 'fourball'; // 'fourball' | 'three_cushion'
     let cushionHitsThisShot = 0;
+
+    // Supabase (anon/publishable key — 클라이언트용)
+    const SUPABASE_URL = 'https://ijmmqmarbkkkssciagof.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_-Yw_iVRLOGF0W1CFj_v9SA_PLm301S6';
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    let roomChannel = null;
+    let roomCode = '';
+    let isHost = false;
+    let isOnline = false;
+    let myPlayerSlot = 1; // 1 or 2
+    let remoteReady = false;
     let labelEls = {}; // ball name -> HTMLElement
     let shotActive = false;
     let ballsHitThisShot = new Set();
@@ -768,6 +783,10 @@
     function onPointerDown(e) {
       if (!document.getElementById('lobby').classList.contains('hidden')) return;
       if (winner) return;
+      if (isOnline && currentPlayer !== myPlayerSlot) {
+        statusEl.textContent = '상대 차례입니다';
+        return;
+      }
       if (!allBallsSleeping()) return;
       const cue = getCueBall();
       if (!cue) return;
@@ -838,6 +857,12 @@
         prevDistances = {};
         cushionHitsThisShot = 0;
         statusEl.textContent = `샷! 파워 ${currentPower.toFixed(1)}`;
+        if (isOnline) {
+          broadcast('shot', {
+            player: currentPlayer,
+            impulse: { x: impulse.x, y: 0, z: impulse.z }
+          });
+        }
       } else {
         statusEl.textContent = '준비 완료 · 큐볼 근처 클릭 후 드래그하여 샷';
       }
@@ -998,6 +1023,11 @@
         statusEl.textContent += ` → ${playerNames[currentPlayer]} 차례`;
       }
       ballsHitThisShot.clear();
+      if (isOnline) {
+        broadcast('sync_score', {
+          scores, needConfirm, currentPlayer, winner
+        });
+      }
     }
 
     function onKey(e) {
@@ -1452,6 +1482,7 @@
     }
 
     // ========== Lobby / Room ==========
+
     function generateRoomCode() {
       const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
       let s = '';
@@ -1459,7 +1490,115 @@
       return s;
     }
 
-    async function startFromLobby() {
+    function leaveRoomChannel() {
+      if (roomChannel) {
+        supabase.removeChannel(roomChannel);
+        roomChannel = null;
+      }
+    }
+
+    function broadcast(event, payload) {
+      if (!roomChannel || !isOnline) return Promise.resolve();
+      return roomChannel.send({ type: 'broadcast', event, payload });
+    }
+
+    function applyRemoteShot(payload) {
+      // 상대가 친 샷을 로컬 물리에도 적용
+      const name = PLAYER_CUE[payload.player];
+      const ball = balls.find(b => b.name === name);
+      if (!ball) return;
+      ball.body.wakeUp();
+      ball.body.applyImpulse({
+        x: payload.impulse.x,
+        y: 0,
+        z: payload.impulse.z
+      }, true);
+      shotActive = true;
+      ballsHitThisShot.clear();
+      prevDistances = {};
+      cushionHitsThisShot = 0;
+      currentPlayer = payload.player;
+      statusEl.textContent = `${playerNames[payload.player]} 샷! (온라인)`;
+      updateScoreUI();
+      updateBallLabelText();
+    }
+
+    function subscribeRoom(code) {
+      leaveRoomChannel();
+      roomCode = code;
+      roomChannel = supabase.channel(`room:${code}`, {
+        config: { broadcast: { self: false } }
+      });
+
+      roomChannel
+        .on('broadcast', { event: 'join' }, ({ payload }) => {
+          if (!isHost) return;
+          remoteReady = true;
+          playerNames[2] = payload.name || 'Player2';
+          updateBallLabelText();
+          statusEl.textContent = `${playerNames[2]} 입장! 게임을 시작합니다...`;
+          beginGameAfterLobby(code);
+        })
+        .on('broadcast', { event: 'host_start' }, ({ payload }) => {
+          if (isHost) return;
+          gameMode = payload.gameMode || 'fourball';
+          SCORE_TARGET = payload.SCORE_TARGET || 10;
+          playerNames = payload.names || playerNames;
+          if (gameMode === 'three_cushion') {
+            PLAYER_CUE[1] = 'cue';
+            PLAYER_CUE[2] = 'yellow';
+          } else {
+            PLAYER_CUE[1] = 'cue';
+            PLAYER_CUE[2] = 'white2';
+          }
+          document.getElementById('lobby').classList.add('hidden');
+          resetBalls();
+          updateBallLabelText();
+          currentPlayer = payload.first || 1;
+          updateScoreUI();
+          statusEl.textContent = `방 ${code} · 온라인 · ${playerNames[currentPlayer]} 선공`;
+        })
+        .on('broadcast', { event: 'shot' }, ({ payload }) => {
+          applyRemoteShot(payload);
+        })
+        .on('broadcast', { event: 'sync_score' }, ({ payload }) => {
+          scores = payload.scores || scores;
+          needConfirm = payload.needConfirm || needConfirm;
+          currentPlayer = payload.currentPlayer || currentPlayer;
+          winner = payload.winner ?? winner;
+          updateScoreUI();
+          updateBallLabelText();
+        })
+        .subscribe((status) => {
+          console.log('Realtime', status);
+          if (status === 'SUBSCRIBED') {
+            statusEl.textContent = isHost
+              ? `방 ${code} 대기 중… 상대에게 코드 공유`
+              : `방 ${code} 입장 요청 중…`;
+          }
+        });
+    }
+
+    async function beginGameAfterLobby(code) {
+      document.getElementById('lobby').classList.add('hidden');
+      resetBalls();
+      updateBallLabelText();
+      const first = await runCoinToss();
+      currentPlayer = first;
+      updateScoreUI();
+      updateBallLabelText();
+      statusEl.textContent = `방 ${code} · ${gameMode === 'three_cushion' ? '3쿠션' : '4구'} · ${SCORE_TARGET}점 · ${playerNames[first]} 선공`;
+      if (isOnline && isHost) {
+        broadcast('host_start', {
+          gameMode,
+          SCORE_TARGET,
+          names: playerNames,
+          first
+        });
+      }
+    }
+
+    function readLobbySettings() {
       const sel = document.getElementById('lobby-target');
       SCORE_TARGET = parseInt(sel.value, 10) || 10;
       const modeEl = document.querySelector('#mode-chips input[name="mode"]:checked');
@@ -1467,8 +1606,6 @@
       const n1 = (document.getElementById('name-p1').value || 'Player1').trim().slice(0, 10);
       const n2 = (document.getElementById('name-p2').value || 'Player2').trim().slice(0, 10);
       playerNames = { 1: n1 || 'Player1', 2: n2 || 'Player2' };
-
-      // 큐볼 배정
       if (gameMode === 'three_cushion') {
         PLAYER_CUE[1] = 'cue';
         PLAYER_CUE[2] = 'yellow';
@@ -1476,60 +1613,81 @@
         PLAYER_CUE[1] = 'cue';
         PLAYER_CUE[2] = 'white2';
       }
-
       scores = { 1: 0, 2: 0 };
       needConfirm = { 1: false, 2: false };
       winner = null;
       shotActive = false;
       ballsHitThisShot.clear();
       cushionHitsThisShot = 0;
+    }
 
+    // 로컬만
+    async function startLocalGame() {
+      isOnline = false;
+      isHost = true;
+      myPlayerSlot = 1;
+      leaveRoomChannel();
+      readLobbySettings();
       let code = (document.getElementById('lobby-code').value || '').trim().toUpperCase();
       if (!code) code = generateRoomCode();
       document.getElementById('lobby-code').value = code;
       const view = document.getElementById('room-code-view');
       view.style.display = 'block';
       view.textContent = code;
-
-      document.getElementById('lobby').classList.add('hidden');
-      resetBalls();
-      updateBallLabelText();
-
-      const first = await runCoinToss();
-      currentPlayer = first;
-      updateScoreUI();
-      updateBallLabelText();
-      statusEl.textContent = `방 ${code} · ${gameMode === 'three_cushion' ? '3쿠션' : '4구'} · ${SCORE_TARGET}점 · ${playerNames[first]} 선공`;
+      await beginGameAfterLobby(code);
     }
 
-    
-    // score chip → select sync
-    document.querySelectorAll('#score-chips input[name="target"]').forEach(r => {
-      r.addEventListener('change', () => {
-        const sel = document.getElementById('lobby-target');
-        if (sel) sel.value = r.value;
-      });
-    });
-
-    
-    document.querySelectorAll('#mode-chips input[name="mode"]').forEach(r => {
-      r.addEventListener('change', () => {
-        const hint = document.getElementById('lobby-rule-hint');
-        const prev = document.getElementById('lobby-balls-preview');
-        if (r.value === 'three_cushion') {
-          if (hint) hint.textContent = '3쿠션: 두 공 모두 + 쿠션 3회 이상 = 득점';
-          if (prev) prev.innerHTML = '<span class="w"></span><span class="y"></span><span class="r"></span>';
-        } else {
-          if (hint) hint.textContent = '4구: 빨강+노랑 동시 접촉 = 득점';
-          if (prev) prev.innerHTML = '<span class="w"></span><span class="w"></span><span class="r"></span><span class="y"></span>';
+    // 온라인 호스트
+    async function startOnlineHost() {
+      isOnline = true;
+      isHost = true;
+      myPlayerSlot = 1;
+      remoteReady = false;
+      readLobbySettings();
+      let code = (document.getElementById('lobby-code').value || '').trim().toUpperCase();
+      if (!code) code = generateRoomCode();
+      document.getElementById('lobby-code').value = code;
+      const view = document.getElementById('room-code-view');
+      view.style.display = 'block';
+      view.textContent = code;
+      subscribeRoom(code);
+      statusEl.textContent = `방 ${code} 생성됨 · 상대 입장 대기 (로컬로 먼저 하려면 빠른 시작)`;
+      // 호스트도 대기만 — 상대 join 시 자동 시작. 30초 후에도 없으면 안내
+      setTimeout(() => {
+        if (isOnline && isHost && !remoteReady && !document.getElementById('lobby').classList.contains('hidden')) {
+          statusEl.textContent = `방 ${code} 대기 중… 코드 공유 또는 빠른 시작(로컬)`;
         }
-      });
-    });
+      }, 1500);
+    }
 
-    document.getElementById('btn-create').addEventListener('click', startFromLobby);
-    document.getElementById('btn-join-local').addEventListener('click', startFromLobby);
+    // 온라인 참가
+    async function joinOnlineRoom() {
+      let code = (document.getElementById('lobby-code').value || '').trim().toUpperCase();
+      if (!code || code.length < 4) {
+        alert('참가할 방 코드를 입력하세요.');
+        return;
+      }
+      isOnline = true;
+      isHost = false;
+      myPlayerSlot = 2;
+      readLobbySettings();
+      // 참가자는 이름2를 자신의 이름으로
+      const n = (document.getElementById('name-p2').value || document.getElementById('name-p1').value || 'Player2').trim().slice(0, 10);
+      playerNames[2] = n || 'Player2';
+      document.getElementById('room-code-view').style.display = 'block';
+      document.getElementById('room-code-view').textContent = code;
+      subscribeRoom(code);
+      // 구독 후 join 신호
+      setTimeout(() => {
+        broadcast('join', { name: playerNames[2], slot: 2 });
+        statusEl.textContent = `방 ${code} 입장 요청 완료 · 호스트 시작 대기`;
+      }, 500);
+    }
 
-    init().catch(e => {
+    document.getElementById('btn-create').addEventListener('click', startOnlineHost);
+    document.getElementById('btn-join-local').addEventListener('click', startLocalGame);
+    document.getElementById('btn-join-online').addEventListener('click', joinOnlineRoom);
+
       console.error(e);
       statusEl.textContent = '오류: ' + e.message;
     });
