@@ -1688,6 +1688,7 @@
     document.getElementById('btn-join-local').addEventListener('click', startLocalGame);
     document.getElementById('btn-join-online').addEventListener('click', joinOnlineRoom);
 
+    init().catch(e => {
       console.error(e);
       statusEl.textContent = '오류: ' + e.message;
     });
