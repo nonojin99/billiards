@@ -534,12 +534,12 @@
     const RAIL_HEIGHT    = 0.09;
     const BALL_MASS = 0.21;
 
-    const LINEAR_DAMP = 0.20;
-    const ANGULAR_DAMP = 0.25;
-    // 실제 측정값 기반 (Alciatore / Mathavan / pooltool 참고)
-    const BALL_REST = 0.90;             // 공-공 반발계수 (에너지 손실 반영)
-    const CUSHION_REST = 0.82;          // 쿠션 반발계수 (실측 효과값 0.80~0.85)
-    const FRICTION = 0.20;              // 쿠션 마찰 (Mathavan μ≈0.14, 실사용 0.15~0.22)
+    // 감쇠 약간 완화 → 관성·충돌 전달 개선
+    const LINEAR_DAMP = 0.14;
+    const ANGULAR_DAMP = 0.18;
+    const BALL_REST = 0.92;
+    const CUSHION_REST = 0.82;
+    const FRICTION = 0.12;
 
     // 이전 100%의 80%를 새 100%로 기준
     const MAX_POWER = 2.304;
@@ -630,6 +630,8 @@
     let shotActive = false;
     let ballsHitThisShot = new Set();
     let prevDistances = {};
+    let shotResolver = false; // 온라인: 샷을 친 클라이언트만 득점/턴 판정
+    let shotOwner = null;     // 이번 샷을 친 플레이어 번호
     const clock = new THREE.Clock();
     const statusEl = document.getElementById('status');
     const powerWrap = document.getElementById('power-wrap');
@@ -863,10 +865,10 @@
         world.createCollider(
           RAPIER.ColliderDesc.ball(BALL_R)
             .setMass(BALL_MASS)
-            .setFriction(0.04)
+            .setFriction(0.06)
             .setRestitution(BALL_REST)
-            .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max)
-            .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min),
+            .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Average)
+            .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Average),
           body
         );
 
@@ -1173,17 +1175,17 @@
       setTopView();
     }
 
-    // 당점 → 토크 (상=전진회전, 하=당김, 좌우=사이드)
+    // 당점 → 토크 (중앙이면 0 — 의도치 않은 곡선 방지)
     function tipToTorque(power) {
+      const tx = tipOffset.x, ty = tipOffset.y;
+      if (Math.hypot(tx, ty) < 0.12) return { x: 0, y: 0, z: 0 };
       const dir = aimDir.clone().normalize();
       const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
-      const spin = power * 0.022;
-      // tipOffset.y > 0 상단 → topspin (전진), < 0 하단 → backspin
-      // tipOffset.x > 0 우측 → 우측 사이드, < 0 좌측
+      const spin = power * 0.018;
       return {
-        x: right.x * (-tipOffset.y) * spin + dir.x * tipOffset.x * spin * 0.25,
-        y: tipOffset.x * spin * 1.35,
-        z: right.z * (-tipOffset.y) * spin + dir.z * tipOffset.x * spin * 0.25
+        x: right.x * (-ty) * spin + dir.x * tx * spin * 0.2,
+        y: tx * spin * 1.2,
+        z: right.z * (-ty) * spin + dir.z * tx * spin * 0.2
       };
     }
 
@@ -1405,38 +1407,40 @@
         return;
       }
 
-      // ③ 파워 드래그
+      // ③ 파워 드래그 — 당긴 거리만큼 파워 (다시 가까이 가져오면 감소)
       if (!aimDragOrigin) return;
       const locked = document.pointerLockElement === renderer.domElement;
       const mdx = e.movementX || 0;
       const mdy = e.movementY || 0;
-      const dx = locked ? mdx : (e.clientX - aimDragOrigin.x);
-      const dy = locked ? mdy : (e.clientY - aimDragOrigin.y);
-      // 포인터락 시 이동량 누적, 아니면 시작점 거리
-      if (locked) {
-        aimDragOrigin.pullAcc += Math.hypot(mdx, mdy);
-      }
-      const dragDist = locked
-        ? aimDragOrigin.pullAcc
-        : Math.hypot(e.clientX - aimDragOrigin.x, e.clientY - aimDragOrigin.y);
 
-      if (!aimLocked && dragDist > 30) {
-        aimLocked = true;
-      }
       if (!aimLocked) {
+        // 짧은 구간: 좌우 미세 조준
         if (locked) {
           aimYaw -= mdx * AIM_TURN_SENS;
           aimDragOrigin.yaw = aimYaw;
+          aimDragOrigin.pullAcc += Math.hypot(mdx, mdy);
         } else {
           aimYaw = aimDragOrigin.yaw - (e.clientX - aimDragOrigin.x) * AIM_TURN_SENS;
         }
+        const preDist = locked
+          ? aimDragOrigin.pullAcc
+          : Math.hypot(e.clientX - aimDragOrigin.x, e.clientY - aimDragOrigin.y);
         syncAimDirFromYaw();
         setShotCamera(cuePos);
         currentPower = 0;
         powerBar.style.width = '0%';
         document.getElementById('power-label').textContent = 'POWER 0% · 방향 조정';
+        if (preDist > 30) {
+          aimLocked = true;
+          // 파워 조절은 커서 거리 기반 → 락 해제
+          releaseAimPointerLock();
+          aimDragOrigin.x = e.clientX;
+          aimDragOrigin.y = e.clientY;
+        }
       } else {
-        const pull = Math.max(0, dragDist - 20);
+        // 시작점에서 현재 커서까지 거리 = 파워 (멀어지면↑ 가까워지면↓)
+        const dragDist = Math.hypot(e.clientX - aimDragOrigin.x, e.clientY - aimDragOrigin.y);
+        const pull = Math.max(0, dragDist - 8);
         const sens = Math.max(45, playerSettings.dragSens);
         currentPower = Math.min(getMaxPower(), pull / sens);
         const maxP = getMaxPower();
@@ -1457,10 +1461,17 @@
           y: 0,
           z: aimDir.z * currentPower
         };
+        // 잔여 각속도 제거 후 샷 (의도치 않은 휨 방지)
+        cue.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        cue.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
         const torque = tipToTorque(currentPower);
         cue.body.applyImpulse(impulse, true);
-        cue.body.applyTorqueImpulse(torque, true);
+        if (torque.x || torque.y || torque.z) {
+          cue.body.applyTorqueImpulse(torque, true);
+        }
         shotActive = true;
+        shotResolver = true;
+        shotOwner = currentPlayer;
         ballsHitThisShot.clear();
         prevDistances = {};
         cushionHitsThisShot = 0;
@@ -1573,9 +1584,15 @@
       if (!shotActive || winner) return;
       if (!allBallsSleeping()) return;
 
+      // 온라인: 샷을 친 쪽만 판정 → sync로 전달 (중복 득점/턴스킵 방지)
+      if (isOnline && !shotResolver) {
+        shotActive = false;
+        return;
+      }
+
       shotActive = false;
-      const hitCount = ballsHitThisShot.size;
-      const p = currentPlayer;
+      const p = shotOwner != null ? shotOwner : currentPlayer;
+      currentPlayer = p;
 
       let scored = false;
       let failMsg = '';
@@ -1645,6 +1662,8 @@
         statusEl.textContent += ` → ${playerNames[currentPlayer]} 차례`;
       }
       ballsHitThisShot.clear();
+      shotOwner = null;
+      shotResolver = false;
       if (isOnline) {
         broadcast('sync_score', {
           scores, needConfirm, currentPlayer, winner
@@ -2130,21 +2149,25 @@
     }
 
     function applyRemoteShot(payload) {
-      // 상대가 친 샷을 로컬 물리에도 적용
+      // 상대 샷 물리만 적용 — 득점/턴은 sync_score로만 반영
       const name = PLAYER_CUE[payload.player];
       const ball = balls.find(b => b.name === name);
       if (!ball) return;
       ball.body.wakeUp();
+      ball.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      ball.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
       ball.body.applyImpulse({
         x: payload.impulse.x,
         y: 0,
         z: payload.impulse.z
       }, true);
-      if (payload.torque) {
+      if (payload.torque && (payload.torque.x || payload.torque.y || payload.torque.z)) {
         ball.body.applyTorqueImpulse(payload.torque, true);
       }
       if (payload.tipOffset) tipOffset = payload.tipOffset;
       shotActive = true;
+      shotResolver = false; // 판정은 친 쪽이 함
+      shotOwner = payload.player;
       ballsHitThisShot.clear();
       prevDistances = {};
       cushionHitsThisShot = 0;
@@ -2213,10 +2236,13 @@
           applyRemoteShot(payload);
         })
         .on('broadcast', { event: 'sync_score' }, ({ payload }) => {
-          scores = payload.scores || scores;
-          needConfirm = payload.needConfirm || needConfirm;
-          currentPlayer = payload.currentPlayer || currentPlayer;
-          winner = payload.winner ?? winner;
+          if (payload.scores) scores = payload.scores;
+          if (payload.needConfirm) needConfirm = payload.needConfirm;
+          if (payload.currentPlayer != null) currentPlayer = payload.currentPlayer;
+          if (payload.winner !== undefined) winner = payload.winner;
+          shotActive = false;
+          shotResolver = false;
+          shotOwner = null;
           updateScoreUI();
           updateBallLabelText();
         })
@@ -2258,8 +2284,11 @@
     }
 
     function readLobbySettings() {
+      // 라디오 버튼이 실제 UI — hidden select와 동기화
+      const targetRadio = document.querySelector('#score-chips input[name="target"]:checked');
       const sel = document.getElementById('lobby-target');
-      SCORE_TARGET = parseInt(sel.value, 10) || 10;
+      SCORE_TARGET = targetRadio ? (parseInt(targetRadio.value, 10) || 10) : (parseInt(sel.value, 10) || 10);
+      if (sel) sel.value = String(SCORE_TARGET);
       const modeEl = document.querySelector('#mode-chips input[name="mode"]:checked');
       gameMode = modeEl ? modeEl.value : 'fourball';
       const n1 = (document.getElementById('name-p1').value || 'Player1').trim().slice(0, 10);
@@ -2271,9 +2300,19 @@
       needConfirm = { 1: false, 2: false };
       winner = null;
       shotActive = false;
+      shotResolver = false;
+      shotOwner = null;
       ballsHitThisShot.clear();
       cushionHitsThisShot = 0;
     }
+
+    // 점수 칩 클릭 시 hidden select 동기화
+    document.querySelectorAll('#score-chips input[name="target"]').forEach(r => {
+      r.addEventListener('change', () => {
+        const sel = document.getElementById('lobby-target');
+        if (sel) sel.value = r.value;
+      });
+    });
 
     // 로컬만
     async function startLocalGame() {
