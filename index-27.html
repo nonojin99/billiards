@@ -1,0 +1,2438 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>당구 - 4구 / 3쿠션</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0a; font-family: system-ui, sans-serif; color: #e0e0e0; }
+    #game-canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+    #ui { position: absolute; top: 12px; left: 12px; pointer-events: none; z-index: 10; }
+    #info { background: rgba(0,0,0,0.75); backdrop-filter: blur(8px); padding: 12px 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); max-width: 360px; }
+    #info h1 { font-size: 1.05rem; margin-bottom: 6px; color: #7dd3fc; }
+    #info p { font-size: 0.78rem; opacity: 0.85; margin: 3px 0; line-height: 1.35; }
+    #status { margin-top: 10px; background: rgba(0,0,0,0.75); padding: 8px 12px; border-radius: 6px; font-size: 0.82rem; border: 1px solid rgba(255,255,255,0.12); }
+    #scoreboard {
+      margin-top: 10px; background: rgba(0,0,0,0.75); padding: 10px 14px;
+      border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); min-width: 200px;
+    }
+    #scoreboard .player-block { margin-bottom: 8px; padding: 6px; border-radius: 6px; }
+    #scoreboard .player-block.active { background: rgba(125,211,252,0.12); border: 1px solid rgba(125,211,252,0.35); }
+    #scoreboard .score-row {
+      display: flex; justify-content: space-between; gap: 16px;
+      font-size: 0.88rem; margin: 2px 0;
+    }
+    #scoreboard .score-row span:last-child { font-weight: 700; color: #7dd3fc; font-size: 1.1rem; }
+    #scoreboard .target span:last-child { color: #94a3b8; font-size: 0.9rem; }
+    #scoreboard .beads { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+    #scoreboard .bead {
+      width: 12px; height: 12px; border-radius: 50%;
+      background: #334155; border: 1px solid #64748b;
+    }
+    #scoreboard .bead.scored {
+      background: #fbbf24; border-color: #f59e0b; box-shadow: 0 0 4px rgba(251,191,36,0.5);
+    }
+    #scoreboard .bead.confirm {
+      background: #ef4444; border-color: #dc2626; box-shadow: 0 0 4px rgba(239,68,68,0.6);
+    }
+    #turn-info { margin-top: 8px; font-size: 0.82rem; color: #a5f3fc; text-align: center; }
+
+    #lobby {
+      position: absolute; inset: 0; z-index: 20;
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: auto;
+      background:
+        radial-gradient(ellipse 80% 60% at 50% 40%, rgba(27, 94, 32, 0.35) 0%, transparent 70%),
+        linear-gradient(160deg, #0a0f0c 0%, #0c1218 40%, #0a1014 100%);
+    }
+    #lobby.hidden { display: none; }
+    #lobby::before {
+      content: ''; position: absolute; inset: 0; opacity: 0.04; pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='2' cy='2' r='1' fill='%23fff'/%3E%3C/svg%3E");
+    }
+    .lobby-card {
+      position: relative;
+      background: linear-gradient(180deg, #1a2332 0%, #121a24 100%);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 20px;
+      padding: 36px 36px 28px;
+      width: min(420px, 92vw);
+      color: #e8eef5;
+      box-shadow:
+        0 0 0 1px rgba(0,0,0,0.4),
+        0 25px 60px rgba(0,0,0,0.55),
+        inset 0 1px 0 rgba(255,255,255,0.06);
+    }
+    .lobby-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em;
+      text-transform: uppercase; color: #86efac;
+      background: rgba(34, 197, 94, 0.12);
+      border: 1px solid rgba(34, 197, 94, 0.25);
+      padding: 4px 10px; border-radius: 999px; margin-bottom: 14px;
+    }
+    .lobby-badge .dot {
+      width: 6px; height: 6px; border-radius: 50%; background: #4ade80;
+      box-shadow: 0 0 6px #4ade80;
+    }
+    .lobby-card h2 {
+      color: #f8fafc; margin: 0 0 6px; font-size: 1.45rem; font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .lobby-card .sub { font-size: 0.82rem; color: #94a3b8; margin-bottom: 22px; line-height: 1.45; }
+    .lobby-balls {
+      display: flex; gap: 8px; margin-bottom: 22px; justify-content: center;
+    }
+    .lobby-balls span {
+      width: 18px; height: 18px; border-radius: 50%;
+      box-shadow: inset -2px -2px 4px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .lobby-balls .w { background: radial-gradient(circle at 35% 30%, #fff, #d4d4d4); }
+    .lobby-balls .r { background: radial-gradient(circle at 35% 30%, #f87171, #b91c1c); }
+    .lobby-balls .y { background: radial-gradient(circle at 35% 30%, #fde047, #ca8a04); }
+    .lobby-section-title {
+      font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #64748b; margin-bottom: 10px;
+    }
+    .score-chips {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 20px;
+    }
+    .score-chips label {
+      cursor: pointer; margin: 0;
+      display: flex; align-items: center; justify-content: center;
+      padding: 12px 0; border-radius: 10px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(71, 85, 105, 0.6);
+      font-size: 0.95rem; font-weight: 600; color: #cbd5e1;
+      transition: all 0.15s ease; user-select: none;
+    }
+    .score-chips label:hover {
+      border-color: rgba(125, 211, 252, 0.4); color: #e0f2fe;
+    }
+    .score-chips input { display: none; }
+    .score-chips input:checked + span,
+    .score-chips label:has(input:checked) {
+      background: rgba(14, 165, 233, 0.18);
+      border-color: #0ea5e9;
+      color: #7dd3fc;
+      box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.3), inset 0 0 12px rgba(14, 165, 233, 0.08);
+    }
+    .lobby-field { margin-bottom: 8px; }
+    .lobby-field label {
+      display: block; font-size: 0.72rem; font-weight: 600;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      color: #64748b; margin-bottom: 8px;
+    }
+    .lobby-field input {
+      width: 100%; padding: 12px 14px; border-radius: 10px;
+      border: 1px solid rgba(71, 85, 105, 0.7);
+      background: rgba(15, 23, 42, 0.9); color: #f1f5f9;
+      font-size: 1rem; letter-spacing: 0.12em; text-align: center;
+      font-family: ui-monospace, monospace; outline: none;
+      transition: border-color 0.15s;
+    }
+    .lobby-field input:focus { border-color: #0ea5e9; }
+    .lobby-field input::placeholder { letter-spacing: 0; color: #475569; font-family: system-ui, sans-serif; }
+    .room-code-display {
+      margin: 12px 0 0; padding: 12px; border-radius: 10px;
+      background: rgba(251, 191, 36, 0.08);
+      border: 1px dashed rgba(251, 191, 36, 0.35);
+      text-align: center; font-size: 1.5rem; font-weight: 700;
+      letter-spacing: 0.28em; color: #fbbf24;
+      font-family: ui-monospace, monospace; display: none;
+    }
+    .lobby-card .btn-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+    .lobby-card .btn-row button { min-width: 30%; flex: 1 1 30%; }
+    .lobby-card button {
+      flex: 1; padding: 13px 12px; border: none; border-radius: 10px;
+      font-weight: 650; cursor: pointer; font-size: 0.92rem;
+      transition: transform 0.12s, background 0.15s, box-shadow 0.15s;
+    }
+    .lobby-card button:active { transform: scale(0.98); }
+    .btn-primary {
+      background: linear-gradient(180deg, #38bdf8 0%, #0ea5e9 100%);
+      color: #042f3a;
+      box-shadow: 0 4px 14px rgba(14, 165, 233, 0.35);
+    }
+    .btn-primary:hover {
+      background: linear-gradient(180deg, #7dd3fc 0%, #38bdf8 100%);
+      box-shadow: 0 6px 18px rgba(14, 165, 233, 0.45);
+    }
+    .btn-secondary {
+      background: rgba(30, 41, 59, 0.9); color: #e2e8f0;
+      border: 1px solid rgba(71, 85, 105, 0.8) !important;
+    }
+    .btn-secondary:hover { background: rgba(51, 65, 85, 0.95); border-color: #94a3b8 !important; }
+    .lobby-footer {
+      margin-top: 18px; text-align: center; font-size: 0.72rem; color: #475569;
+    }
+
+    .ball-label {
+      position: absolute; transform: translate(-50%, -100%);
+      pointer-events: none; z-index: 15;
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em;
+      color: #0f172a; background: rgba(248, 250, 252, 0.4);
+      padding: 3px 8px; border-radius: 6px;
+      white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      border: 1px solid rgba(255,255,255,0.25);
+      opacity: 0.4;
+    }
+    .ball-label.p1 { background: rgba(125, 211, 252, 0.4); }
+    .ball-label.p2 { background: rgba(253, 224, 71, 0.4); }
+    .ball-label .turn-mark { margin-left: 4px; }
+    #coin-toss {
+      position: absolute; inset: 0; z-index: 25;
+      display: none; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at center, rgba(15,25,40,0.75) 0%, rgba(5,8,12,0.95) 70%);
+      pointer-events: auto; overflow: hidden;
+    }
+    #coin-toss.show { display: flex; animation: tossFadeIn 0.35s ease; }
+    @keyframes tossFadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .toss-card {
+      text-align: center; padding: 40px 44px 32px; border-radius: 24px;
+      background: linear-gradient(165deg, rgba(30,41,59,0.95), rgba(15,23,42,0.98));
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: 0 30px 80px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06);
+      min-width: 300px; position: relative; z-index: 2;
+    }
+    .toss-card h3 {
+      color: #f8fafc; font-size: 1.3rem; margin-bottom: 4px;
+      letter-spacing: -0.02em;
+    }
+    .toss-card .toss-sub { color: #94a3b8; font-size: 0.85rem; margin-bottom: 8px; }
+    .toss-vs {
+      display: flex; justify-content: center; align-items: center; gap: 12px;
+      margin-bottom: 18px; font-size: 0.8rem; color: #64748b;
+    }
+    .toss-vs span { color: #e2e8f0; font-weight: 600; }
+    .coin-stage {
+      height: 220px; width: 100%; min-height: 220px; position: relative; margin: 0 auto 12px;
+      border-radius: 12px; overflow: hidden;
+      background: #152018;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    #coin-canvas {
+      display: block; width: 100%; height: 100%;
+    }
+    .coin-shadow {
+      position: absolute; bottom: 8px; width: 70px; height: 14px;
+      background: radial-gradient(ellipse, rgba(0,0,0,0.45), transparent 70%);
+      border-radius: 50%; transition: transform 0.1s, opacity 0.1s;
+    }
+    .coin-3d {
+      width: 100px; height: 100px; position: relative;
+      transform-style: preserve-3d;
+      margin-bottom: 18px;
+    }
+    .coin-3d .face {
+      position: absolute; inset: 0; border-radius: 50%;
+      backface-visibility: hidden;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.1rem; font-weight: 800; letter-spacing: 0.02em;
+      border: 3px solid #fbbf24;
+      box-shadow: inset 0 -6px 12px rgba(0,0,0,0.3), inset 0 4px 8px rgba(255,255,255,0.2);
+    }
+    .coin-3d .face.front {
+      background: radial-gradient(circle at 32% 28%, #fef3c7, #f59e0b 45%, #b45309 80%);
+      color: #78350f;
+    }
+    .coin-3d .face.back {
+      background: radial-gradient(circle at 32% 28%, #e0f2fe, #38bdf8 45%, #0369a1 80%);
+      color: #0c4a6e;
+      border-color: #7dd3fc;
+      transform: rotateY(180deg);
+    }
+    .coin-3d .edge {
+      position: absolute; inset: 8px; border-radius: 50%;
+      background: linear-gradient(90deg, #92400e, #fbbf24, #92400e);
+      transform: translateZ(-2px);
+    }
+    .coin-3d.tossing {
+      animation: coinTossArc 1.8s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+    }
+    @keyframes coinTossArc {
+      0%   { transform: translateY(40px) rotateY(0deg) rotateX(10deg) scale(0.85); }
+      25%  { transform: translateY(-90px) rotateY(360deg) rotateX(20deg) scale(1.05); }
+      50%  { transform: translateY(-120px) rotateY(720deg) rotateX(-10deg) scale(1.1); }
+      75%  { transform: translateY(-40px) rotateY(1080deg) rotateX(15deg) scale(1); }
+      100% { transform: translateY(0) rotateY(var(--final-rot, 1440deg)) rotateX(0deg) scale(1); }
+    }
+    .coin-3d.landed {
+      animation: coinLand 0.45s ease;
+    }
+    @keyframes coinLand {
+      0% { transform: translateY(0) scale(1); }
+      40% { transform: translateY(-12px) scale(1.04); }
+      100% { transform: translateY(0) scale(1); }
+    }
+    .toss-sparks {
+      position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 1;
+    }
+    .toss-sparks i {
+      position: absolute; width: 4px; height: 4px; border-radius: 50%;
+      background: #fbbf24; opacity: 0;
+    }
+    .toss-result {
+      font-size: 1.2rem; font-weight: 700; color: #7dd3fc;
+      min-height: 1.6em; margin-bottom: 8px;
+      transition: transform 0.3s, opacity 0.3s;
+    }
+    .toss-result.reveal {
+      animation: resultPop 0.5s cubic-bezier(0.2, 1.2, 0.4, 1);
+      color: #fde68a; text-shadow: 0 0 20px rgba(251, 191, 36, 0.4);
+    }
+    @keyframes resultPop {
+      0% { transform: scale(0.5); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .toss-card button {
+      padding: 13px 32px; border: none; border-radius: 12px;
+      background: linear-gradient(180deg, #38bdf8, #0ea5e9);
+      color: #042f3a; font-weight: 700; cursor: pointer; font-size: 0.95rem;
+      display: none; margin-top: 8px;
+      box-shadow: 0 6px 20px rgba(14,165,233,0.35);
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .toss-card button:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(14,165,233,0.45); }
+    .toss-card button.show { display: inline-block; animation: resultPop 0.4s ease; }
+    #power-wrap {
+      position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
+      width: 280px; pointer-events: none; z-index: 10;
+      display: none;
+    }
+    #power-label { text-align: center; font-size: 0.8rem; margin-bottom: 6px; color: #94a3b8; }
+    #power-bar-bg {
+      height: 14px; background: rgba(30,30,30,0.9); border-radius: 7px;
+      border: 1px solid rgba(255,255,255,0.15); overflow: hidden;
+    }
+    #power-bar {
+      height: 100%; width: 0%; background: linear-gradient(90deg, #22c55e, #eab308, #ef4444);
+      border-radius: 7px; transition: width 0.05s linear;
+    }
+    #btn-settings {
+      position: absolute; top: 12px; right: 12px; z-index: 15;
+      background: rgba(0,0,0,0.7); border: 1px solid rgba(255,255,255,0.15);
+      color: #e2e8f0; border-radius: 8px; padding: 8px 12px; cursor: pointer;
+      font-size: 0.8rem; backdrop-filter: blur(6px);
+    }
+    #btn-settings:hover { background: rgba(30,40,55,0.9); border-color: #7dd3fc; }
+    #settings-panel {
+      display: none; position: absolute; top: 48px; right: 12px; z-index: 16;
+      width: min(300px, 90vw); background: rgba(15,20,28,0.95);
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
+      padding: 16px; backdrop-filter: blur(10px); color: #e2e8f0;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+    }
+    #settings-panel.open { display: block; }
+    #settings-panel h3 { font-size: 0.95rem; color: #7dd3fc; margin: 0 0 12px; }
+    #settings-panel .set-row { margin-bottom: 14px; }
+    #settings-panel label {
+      display: flex; justify-content: space-between; font-size: 0.78rem;
+      color: #94a3b8; margin-bottom: 6px;
+    }
+    #settings-panel label span.val { color: #f8fafc; font-weight: 600; }
+    #settings-panel input[type=range] { width: 100%; accent-color: #38bdf8; }
+    #settings-panel .set-hint { font-size: 0.7rem; color: #64748b; margin-top: 4px; line-height: 1.35; }
+    #settings-panel .set-actions { display: flex; gap: 8px; margin-top: 12px; }
+    #settings-panel .set-actions button {
+      flex: 1; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12);
+      background: #1e293b; color: #e2e8f0; cursor: pointer; font-size: 0.78rem;
+    }
+    #settings-panel .set-actions button.primary { background: #0ea5e9; border-color: #0284c7; color: #fff; }
+    /* 당점 2D 오버레이 — 마우스/터치와 1:1 */
+    #tip-overlay {
+      display: none; position: absolute; z-index: 14; pointer-events: auto;
+      width: 140px; height: 140px; margin-left: -70px; margin-top: -70px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.2), rgba(0,0,0,0.35));
+      border: 2px dashed rgba(125, 211, 252, 0.85);
+      box-shadow: 0 0 0 4px rgba(0,0,0,0.25), inset 0 0 20px rgba(0,0,0,0.2);
+      touch-action: none; cursor: crosshair;
+    }
+    #tip-overlay.show { display: block; }
+    #tip-overlay .tip-cross-h, #tip-overlay .tip-cross-v {
+      position: absolute; background: rgba(253, 224, 71, 0.7); pointer-events: none;
+    }
+    #tip-overlay .tip-cross-h { left: 10%; right: 10%; top: 50%; height: 1px; margin-top: -0.5px; }
+    #tip-overlay .tip-cross-v { top: 10%; bottom: 10%; left: 50%; width: 1px; margin-left: -0.5px; }
+    #tip-overlay .tip-dot {
+      position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px;
+      border-radius: 50%; background: #ef4444;
+      border: 2px solid #fff; box-shadow: 0 0 8px rgba(239,68,68,0.8);
+      left: 50%; top: 50%; pointer-events: none;
+    }
+    #tip-overlay .tip-hint {
+      position: absolute; left: 50%; bottom: -28px; transform: translateX(-50%);
+      white-space: nowrap; font-size: 0.72rem; color: #e2e8f0;
+      background: rgba(0,0,0,0.7); padding: 3px 8px; border-radius: 6px;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  
+  <div id="lobby">
+    <div class="lobby-card">
+      <div class="lobby-badge"><span class="dot"></span> 4구 · Local</div>
+      <h2>게임 방 설정</h2>
+      <p class="sub">승리 점수와 방 코드를 정한 뒤 시작하세요.<br/>온라인 매칭은 다음 업데이트에서 지원됩니다.</p>
+      <div class="lobby-balls" id="lobby-balls-preview" aria-hidden="true">
+        <span class="w"></span><span class="y"></span><span class="r"></span><span class="r"></span>
+      </div>
+      <div class="lobby-section-title">게임 모드</div>
+      <div class="score-chips" id="mode-chips" style="grid-template-columns:1fr 1fr;margin-bottom:18px;">
+        <label><input type="radio" name="mode" value="fourball" checked /><span>4구</span></label>
+        <label><input type="radio" name="mode" value="three_cushion" /><span>3쿠션</span></label>
+      </div>
+      <div class="lobby-section-title">승리 점수 (알)</div>
+      <div class="score-chips" id="score-chips">
+        <label><input type="radio" name="target" value="5" /><span>5</span></label>
+        <label><input type="radio" name="target" value="10" checked /><span>10</span></label>
+        <label><input type="radio" name="target" value="15" /><span>15</span></label>
+        <label><input type="radio" name="target" value="20" /><span>20</span></label>
+      </div>
+      <!-- hidden select kept for JS compatibility -->
+      <select id="lobby-target" style="display:none">
+        <option value="5">5</option>
+        <option value="10" selected>10</option>
+        <option value="15">15</option>
+        <option value="20">20</option>
+      </select>
+      <div class="lobby-section-title">플레이어 이름</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+        <div class="lobby-field" style="margin:0">
+          <label for="name-p1">P1 (흰공)</label>
+          <input id="name-p1" type="text" maxlength="10" placeholder="Player 1" value="Player1" style="letter-spacing:0;font-family:system-ui,sans-serif;text-align:left" />
+        </div>
+        <div class="lobby-field" style="margin:0">
+          <label for="name-p2">P2 (노란공)</label>
+          <input id="name-p2" type="text" maxlength="10" placeholder="Player 2" value="Player2" style="letter-spacing:0;font-family:system-ui,sans-serif;text-align:left" />
+        </div>
+      </div>
+      <div class="lobby-field">
+        <label for="lobby-code">방 코드</label>
+        <input id="lobby-code" type="text" maxlength="6" placeholder="비우면 자동 생성" autocomplete="off" />
+      </div>
+      <div class="room-code-display" id="room-code-view"></div>
+      <div class="btn-row">
+        <button class="btn-secondary" type="button" id="btn-join-local">빠른 시작 (로컬)</button>
+        <button class="btn-secondary" type="button" id="btn-join-online">방 참가</button>
+        <button class="btn-primary" type="button" id="btn-create">방 만들기 (온라인)</button>
+      </div>
+      <p class="lobby-footer" id="lobby-rule-hint">4구: 흰·노랑 수구 · 빨강 2개 맞춤 = 득점</p>
+    </div>
+  </div>
+
+  <div id="coin-toss">
+    <div class="toss-sparks" id="toss-sparks"></div>
+    <div class="toss-card">
+      <h3>코인 토스</h3>
+      <p class="toss-sub">선공을 정합니다</p>
+      <div class="toss-vs"><span id="toss-name1">P1</span> VS <span id="toss-name2">P2</span></div>
+      <div class="coin-stage">
+        <canvas id="coin-canvas"></canvas>
+      </div>
+      <div class="toss-result" id="toss-result">준비...</div>
+      <button type="button" id="toss-confirm">게임 시작</button>
+    </div>
+  </div>
+  <div id="ball-labels"></div>
+  <canvas id="game-canvas"></canvas>
+  <div id="ui">
+    <div id="info">
+      <h1>당구 물리 프로토타입 v0.8</h1>
+      <p>점선 원 <b>안</b> 클릭 → 샷 · <b>밖</b> 드래그 → 카메라</p>
+      <p>① 당점 · ② 조준 후 당겨 파워 (큐 거리 반영)</p>
+      <p>우상단 <b>설정</b>에서 최대파워·감도·큐 당김 조절</p>
+      <p><b>R</b> 리셋 · <b>ESC</b> 취소</p>
+    </div>
+    <div id="scoreboard">
+      <div class="player-block" id="p1-block">
+        <div class="score-row"><span id="p1-label">P1 ●</span><span id="p1-score">0</span></div>
+        <div class="beads" id="p1-beads"></div>
+      </div>
+      <div class="player-block" id="p2-block">
+        <div class="score-row"><span id="p2-label">P2 ○</span><span id="p2-score">0</span></div>
+        <div class="beads" id="p2-beads"></div>
+      </div>
+      <div class="score-row target"><span>목표</span><span id="target-val">10</span></div>
+      <div id="turn-info">P1 차례</div>
+    </div>
+    <div id="status">엔진 로딩 중...</div>
+  </div>
+  <div id="power-wrap">
+    <div id="power-label">POWER</div>
+    <div id="power-bar-bg"><div id="power-bar"></div></div>
+  </div>
+  <div id="tip-overlay" aria-hidden="true">
+    <div class="tip-cross-h"></div>
+    <div class="tip-cross-v"></div>
+    <div class="tip-dot" id="tip-dot"></div>
+    <div class="tip-hint">당점 터치 · 중앙=무회전</div>
+  </div>
+  <button type="button" id="btn-settings" title="개인 설정">⚙ 설정</button>
+  <div id="settings-panel" aria-hidden="true">
+    <h3>개인 설정</h3>
+    <div class="set-row">
+      <label>최대 파워 <span class="val" id="set-power-val">100%</span></label>
+      <input type="range" id="set-power-scale" min="30" max="100" step="5" value="100" />
+      <p class="set-hint">샷 최대 세기 (30~100%). 100% = 기본 풀파워.</p>
+    </div>
+    <div class="set-row">
+      <label>충전 감도 <span class="val" id="set-sens-val">보통</span></label>
+      <input type="range" id="set-drag-sens" min="50" max="160" step="5" value="90" />
+      <p class="set-hint">드래그 거리 대비 파워 차는 속도. 낮을수록 조금만 당겨도 파워가 참.</p>
+    </div>
+    <div class="set-row">
+      <label>큐 당김 연출 <span class="val" id="set-pull-val">100%</span></label>
+      <input type="range" id="set-cue-pull" min="50" max="150" step="5" value="100" />
+      <p class="set-hint">파워에 따라 큐가 뒤로 빠지는 거리 연출 강도.</p>
+    </div>
+    <div class="set-row">
+      <label>조준 거리 <span class="val" id="set-camdist-val">가깝게</span></label>
+      <input type="range" id="set-cam-dist" min="28" max="100" step="2" value="55" />
+      <p class="set-hint">큐 라인에 숙여 보는 거리. 낮을수록 공·타겟에 더 가까이.</p>
+    </div>
+    <div class="set-row">
+      <label>조준 높이 <span class="val" id="set-camh-val">낮음</span></label>
+      <input type="range" id="set-cam-height" min="6" max="40" step="1" value="14" />
+      <p class="set-hint">눈높이. 낮을수록 테이블에 붙어 각도가 잘 보임.</p>
+    </div>
+    <div class="set-actions">
+      <button type="button" id="set-reset">기본값</button>
+      <button type="button" class="primary" id="set-close">닫기</button>
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+      "@dimforge/rapier3d-compat": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/rapier.es.js",
+      "@supabase/supabase-js": "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import RAPIER from '@dimforge/rapier3d-compat';
+    import { createClient } from '@supabase/supabase-js';
+
+    // ========== Constants ==========
+    const TABLE_LENGTH = 2.54;
+    const TABLE_WIDTH  = 1.27;
+    const CLOTH_Y = 0.0;                 // 테이블 표면 높이
+    const BALL_R = 0.0305;
+    const BALL_Y = BALL_R + 0.001; // 천 위로 살짝 띄워 파묻힘 방지
+    const CUSHION_HEIGHT = 0.055;        // 공 반지름보다 높게
+    const CUSHION_WIDTH  = 0.06;
+    const RAIL_HEIGHT    = 0.09;
+    const BALL_MASS = 0.21;
+
+    const LINEAR_DAMP = 0.20;
+    const ANGULAR_DAMP = 0.25;
+    // 실제 측정값 기반 (Alciatore / Mathavan / pooltool 참고)
+    const BALL_REST = 0.90;             // 공-공 반발계수 (에너지 손실 반영)
+    const CUSHION_REST = 0.82;          // 쿠션 반발계수 (실측 효과값 0.80~0.85)
+    const FRICTION = 0.20;              // 쿠션 마찰 (Mathavan μ≈0.14, 실사용 0.15~0.22)
+
+    // 이전 100%의 80%를 새 100%로 기준
+    const MAX_POWER = 2.304;
+    // 개인 설정 (localStorage)
+    const playerSettings = {
+      powerScale: 1.0,   // 0.3~1.0 최대 파워 배율
+      dragSens: 90,      // 픽셀당 파워 (작을수록 민감)
+      cuePull: 1.0,      // 큐 당김 연출 배율
+      camDist: 0.55,     // 조준 카메라 거리 (가깝게 숙인 시점)
+      camHeight: 0.14,   // 조준 카메라 높이
+      camSide: 0.04      // 오른손잡이 옆 오프셋
+    };
+    function loadPlayerSettings() {
+      try {
+        const raw = localStorage.getItem('billiards_settings');
+        if (!raw) return;
+        const o = JSON.parse(raw);
+        if (o.powerScale != null) playerSettings.powerScale = Math.min(1.0, Math.max(0.3, o.powerScale));
+        if (o.dragSens) playerSettings.dragSens = Math.min(160, Math.max(50, o.dragSens));
+        if (o.cuePull) playerSettings.cuePull = Math.min(1.5, Math.max(0.5, o.cuePull));
+        if (o.camDist != null) playerSettings.camDist = Math.min(1.2, Math.max(0.28, o.camDist));
+        if (o.camHeight != null) playerSettings.camHeight = Math.min(0.45, Math.max(0.06, o.camHeight));
+        if (o.camSide != null) playerSettings.camSide = Math.min(0.2, Math.max(0, o.camSide));
+      } catch (_) {}
+    }
+    function savePlayerSettings() {
+      try {
+        localStorage.setItem('billiards_settings', JSON.stringify(playerSettings));
+      } catch (_) {}
+    }
+    function getMaxPower() {
+      const modeMul = gameMode === 'three_cushion' ? 0.8 : 1;
+      return MAX_POWER * modeMul * playerSettings.powerScale;
+    }
+    // 4구: 흰·노랑(플레이어) / 빨강·빨강(목적구)
+    const COLORS = { cue: 0xffffff, yellow: 0xffc107, red: 0xe53935, red2: 0xc62828 };
+
+    // ========== State ==========
+    let scene, camera, renderer, controls, world;
+    const balls = [];
+    let aimLine = null;
+    let cueStick = null;
+    let playRing = null;       // 큐볼 주변 점선 원
+    let tipMarker = null;      // 당점 표시
+    let tipGuide = null;       // 당점 선택용 공 앞면 가이드
+    let isAiming = false;
+    let isCharging = false;
+    let chargeStart = null;
+    let currentPower = 0;
+    let aimDir = new THREE.Vector3(1, 0, 0);
+    // idle | tip | aim  — 샷 단계
+    let shotPhase = 'idle';
+    // 당점: x=좌(-)~우(+), y=하(-)~상(+)  / -1~1
+    let tipOffset = { x: 0, y: 0 };
+    let savedCam = null;       // 샷 카메라 복귀용
+    let aimYaw = 0;            // 조준 각도 (XZ 평면, rad)
+    let aimDragOrigin = null;  // 파워 드래그 시작점
+    let aimMoveLastX = null;   // 좌우 조준용 마지막 마우스 X
+    const AIM_TURN_SENS = 0.00056;
+    const AIM_EDGE_SPEED = 0.035;  // 화면 가장자리 자동 회전 (rad/frame 상당)
+    let aimLocked = false;         // 파워 충전 중 조준 고정
+    let aimTarget = null;          // 조준 끝 타겟 마커
+    let aimGround = null;          // 테이블 위 조준 가이드선
+    let postShotTopView = false;   // 샷 직후 탑뷰 고정 여부
+    const tipOverlay = document.getElementById('tip-overlay');
+    const tipDotEl = document.getElementById('tip-dot');
+    let SCORE_TARGET = 10;
+    let scores = { 1: 0, 2: 0 };
+    let needConfirm = { 1: false, 2: false }; // 마지막 알 이후 확인 득점 필요
+    let winner = null;
+    let currentPlayer = 1;
+    const PLAYER_CUE = { 1: 'cue', 2: 'yellow' }; // 흰 / 노랑
+    let playerNames = { 1: 'Player1', 2: 'Player2' };
+    let gameMode = 'fourball'; // 'fourball' | 'three_cushion'
+    let cushionHitsThisShot = 0;
+
+    // Supabase (anon/publishable key — 클라이언트용)
+    const SUPABASE_URL = 'https://ijmmqmarbkkkssciagof.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_-Yw_iVRLOGF0W1CFj_v9SA_PLm301S6';
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    let roomChannel = null;
+    let roomCode = '';
+    let isHost = false;
+    let isOnline = false;
+    let myPlayerSlot = 1; // 1 or 2
+    let remoteReady = false;
+    let labelEls = {}; // ball name -> HTMLElement
+    let shotActive = false;
+    let ballsHitThisShot = new Set();
+    let prevDistances = {};
+    const clock = new THREE.Clock();
+    const statusEl = document.getElementById('status');
+    const powerWrap = document.getElementById('power-wrap');
+    const powerBar = document.getElementById('power-bar');
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // y=0 plane
+
+    async function init() {
+      statusEl.textContent = 'Rapier WASM 초기화 중...';
+      await RAPIER.init();
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0c1017);
+      scene.fog = new THREE.Fog(0x0c1017, 14, 28);
+
+      camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.01, 40);
+      camera.position.set(0, 1.9, 2.5);
+
+      const canvas = document.getElementById('game-canvas');
+      renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.shadowMap.enabled = false;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.05;
+
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 0.02, 0);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.07;
+      controls.maxPolarAngle = Math.PI / 2.05;
+      controls.minDistance = 1.0;
+      controls.maxDistance = 5.5;
+
+      // Lights (그림자 없음 — 궤도 이동 시 노이즈 방지)
+      scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+      scene.add(new THREE.HemisphereLight(0xe8f0ff, 0x1a3d28, 0.4));
+      const key = new THREE.DirectionalLight(0xfff5e6, 0.65);
+      key.position.set(2, 5, 3);
+      key.castShadow = false;
+      scene.add(key);
+      const fill = new THREE.DirectionalLight(0xa0b8d0, 0.3);
+      fill.position.set(-2.5, 3, -2);
+      scene.add(fill);
+
+      world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+
+      createTable();
+      createBalls();
+      createBallLabels();
+      createAimVisuals();
+
+      window.addEventListener('resize', onResize);
+      window.addEventListener('keydown', onKey);
+      // capture: 점선 원 안 클릭 시 카메라 조작 선제 차단
+      canvas.addEventListener('pointerdown', (e) => {
+        if (shotPhase !== 'idle') return;
+        if (!allBallsSleeping() || winner) return;
+        if (isOnline && currentPlayer !== myPlayerSlot) return;
+        const cue = getCueBall();
+        if (!cue) return;
+        const worldPos = getMouseWorldOnTable(e);
+        if (!worldPos) return;
+        const t = cue.body.translation();
+        const dist = Math.hypot(worldPos.x - t.x, worldPos.z - t.z);
+        if (dist <= BALL_R * 3.2) controls.enabled = false;
+      }, true);
+      canvas.addEventListener('pointerdown', onPointerDown);
+      canvas.addEventListener('pointermove', onPointerMove);
+      canvas.addEventListener('pointerup', onPointerUp);
+      canvas.addEventListener('pointerleave', (e) => {
+        // 창 밖 이탈 시 좌표 점프 방지 (파워 충전 중이면 발사 처리)
+        aimMoveLastX = null;
+        if (isCharging) onPointerUp(e);
+      });
+      document.addEventListener('pointerlockchange', () => {
+        if (!document.pointerLockElement) aimMoveLastX = null;
+      });
+
+      // 당점 2D 오버레이 — 터치/클릭 1:1
+      tipOverlay.addEventListener('pointerdown', (e) => {
+        if (shotPhase !== 'tip') return;
+        e.preventDefault();
+        e.stopPropagation();
+        tipOffset = tipOffsetFromOverlayEvent(e);
+        setTipDotFromOffset(tipOffset.x, tipOffset.y);
+        enterAimPhase();
+      });
+      tipOverlay.addEventListener('pointermove', (e) => {
+        if (shotPhase !== 'tip') return;
+        tipOffset = tipOffsetFromOverlayEvent(e);
+        setTipDotFromOffset(tipOffset.x, tipOffset.y);
+      });
+
+      statusEl.textContent = '준비 완료 · 점선 원 안 클릭으로 샷';
+      updateScoreUI();
+      animate();
+    }
+
+    // ========== Table (recessed surface + high cushions) ==========
+    function createTable() {
+      // Outer wood base — 천보다 확실히 아래 (z-fighting 방지)
+      const baseMat = new THREE.MeshStandardMaterial({
+        color: 0x3e2723, roughness: 0.65, metalness: 0.05
+      });
+      const base = new THREE.Mesh(
+        new THREE.BoxGeometry(TABLE_LENGTH + 0.22, 0.1, TABLE_WIDTH + 0.22),
+        baseMat
+      );
+      base.position.y = -0.08;
+      base.receiveShadow = false;
+      base.castShadow = false;
+      scene.add(base);
+
+      // 고급 펠트 + polygonOffset (카메라 이동 시 지글거림 방지)
+      const clothMat = new THREE.MeshStandardMaterial({
+        color: 0x1b5e20,
+        roughness: 0.92,
+        metalness: 0.0
+      });
+      clothMat.polygonOffset = true;
+      clothMat.polygonOffsetFactor = -2;
+      clothMat.polygonOffsetUnits = -2;
+      const cloth = new THREE.Mesh(
+        new THREE.BoxGeometry(TABLE_LENGTH, 0.02, TABLE_WIDTH),
+        clothMat
+      );
+      // halfH=0.01 → top at y=0 (공 바닥과 맞춤)
+      cloth.position.y = -0.01;
+      cloth.receiveShadow = false;
+      cloth.castShadow = false;
+      scene.add(cloth);
+
+      // Floor collider (slightly below surface)
+      const floorBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.02, 0));
+      world.createCollider(
+        RAPIER.ColliderDesc.cuboid(TABLE_LENGTH / 2, 0.02, TABLE_WIDTH / 2)
+          .setFriction(0.14)          // 천 마찰
+          .setRestitution(0.02),
+        floorBody
+      );
+
+      // Cushions (visual + physics) - higher so balls can't jump out
+      const cushionMat = new THREE.MeshStandardMaterial({ color: 0x2e7d32, roughness: 0.85, metalness: 0.0 });
+      const railMat = new THREE.MeshStandardMaterial({ color: 0x4e342e, roughness: 0.5, metalness: 0.1 });
+
+      // Long sides
+      addCushion(0, CUSHION_HEIGHT / 2,  TABLE_WIDTH / 2 + CUSHION_WIDTH / 2,
+                 TABLE_LENGTH / 2 + 0.01, CUSHION_HEIGHT / 2, CUSHION_WIDTH / 2, cushionMat, railMat);
+      addCushion(0, CUSHION_HEIGHT / 2, -(TABLE_WIDTH / 2 + CUSHION_WIDTH / 2),
+                 TABLE_LENGTH / 2 + 0.01, CUSHION_HEIGHT / 2, CUSHION_WIDTH / 2, cushionMat, railMat);
+      // Short sides
+      addCushion( TABLE_LENGTH / 2 + CUSHION_WIDTH / 2, CUSHION_HEIGHT / 2, 0,
+                 CUSHION_WIDTH / 2, CUSHION_HEIGHT / 2, TABLE_WIDTH / 2, cushionMat, railMat);
+      addCushion(-(TABLE_LENGTH / 2 + CUSHION_WIDTH / 2), CUSHION_HEIGHT / 2, 0,
+                 CUSHION_WIDTH / 2, CUSHION_HEIGHT / 2, TABLE_WIDTH / 2, cushionMat, railMat);
+
+      // Extra tall invisible walls to guarantee no escape
+      const wallH = 0.25;
+      const wallT = 0.04;
+      addInvisibleWall(0, wallH / 2,  TABLE_WIDTH / 2 + CUSHION_WIDTH + wallT / 2, TABLE_LENGTH / 2 + 0.1, wallH / 2, wallT / 2);
+      addInvisibleWall(0, wallH / 2, -(TABLE_WIDTH / 2 + CUSHION_WIDTH + wallT / 2), TABLE_LENGTH / 2 + 0.1, wallH / 2, wallT / 2);
+      addInvisibleWall( TABLE_LENGTH / 2 + CUSHION_WIDTH + wallT / 2, wallH / 2, 0, wallT / 2, wallH / 2, TABLE_WIDTH / 2 + 0.1);
+      addInvisibleWall(-(TABLE_LENGTH / 2 + CUSHION_WIDTH + wallT / 2), wallH / 2, 0, wallT / 2, wallH / 2, TABLE_WIDTH / 2 + 0.1);
+    }
+
+    function addCushion(x, y, z, hx, hy, hz, cushionMat, railMat) {
+      // Green cushion face
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(hx * 2, hy * 2, hz * 2), cushionMat);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      scene.add(mesh);
+
+      // Wood rail on top
+      const rail = new THREE.Mesh(
+        new THREE.BoxGeometry(hx * 2 + 0.01, RAIL_HEIGHT - CUSHION_HEIGHT, hz * 2 + 0.01),
+        railMat
+      );
+      rail.position.set(x, CUSHION_HEIGHT + (RAIL_HEIGHT - CUSHION_HEIGHT) / 2, z);
+      rail.castShadow = false;
+      scene.add(rail);
+
+      const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z));
+      const col = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+          .setFriction(0.10)
+          .setRestitution(CUSHION_REST)
+          .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max)
+          .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min);
+      world.createCollider(col, body);
+    }
+
+    function addInvisibleWall(x, y, z, hx, hy, hz) {
+      const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z));
+      const col = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+          .setFriction(0.10)
+          .setRestitution(CUSHION_REST)
+          .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max);
+      world.createCollider(col, body);
+    }
+
+    // ========== Balls ==========
+    function createBalls() {
+      const specs = [
+        { name: 'cue',    color: COLORS.cue,    x: -0.60, z: 0.15 },  // P1 흰
+        { name: 'yellow', color: COLORS.yellow, x: -0.60, z: -0.15 }, // P2 노랑
+        { name: 'red',    color: COLORS.red,    x: 0.40,  z: 0.22 },  // 목적구
+        { name: 'red2',   color: COLORS.red2,   x: 0.40,  z: -0.22 }, // 목적구
+      ];
+
+      specs.forEach((s) => {
+        const mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(BALL_R, 32, 24),
+          new THREE.MeshStandardMaterial({ color: s.color, roughness: 0.12, metalness: 0.04 })
+        );
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        mesh.position.set(s.x, BALL_Y, s.z);
+        scene.add(mesh);
+
+        const body = world.createRigidBody(
+          RAPIER.RigidBodyDesc.dynamic()
+            .setTranslation(s.x, BALL_Y, s.z)
+            .setLinearDamping(LINEAR_DAMP)
+            .setAngularDamping(ANGULAR_DAMP)
+            .setCanSleep(true)
+            .setCcdEnabled(true)
+        );
+
+        world.createCollider(
+          RAPIER.ColliderDesc.ball(BALL_R)
+            .setMass(BALL_MASS)
+            .setFriction(0.04)
+            .setRestitution(BALL_REST)
+            .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max)
+            .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min),
+          body
+        );
+
+        balls.push({ mesh, body, name: s.name });
+      });
+    }
+
+    // ========== Aim visuals ==========
+    function createAimVisuals() {
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(1, 0, 0)
+      ]);
+      aimLine = new THREE.Line(
+        lineGeo,
+        new THREE.LineBasicMaterial({ color: 0xfff59d, transparent: true, opacity: 1 })
+      );
+      aimLine.visible = false;
+      scene.add(aimLine);
+
+      // 테이블 위 굵은 조준 가이드 (시인성)
+      const gPts = [new THREE.Vector3(0, 0.004, 0), new THREE.Vector3(1, 0.004, 0)];
+      aimGround = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(gPts),
+        new THREE.LineBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.95 })
+      );
+      aimGround.visible = false;
+      scene.add(aimGround);
+
+      // 조준 끝 타겟 (원 + 화살표 느낌)
+      const tgt = new THREE.Group();
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.035, 0.055, 24),
+        new THREE.MeshBasicMaterial({ color: 0xfbbf24, side: THREE.DoubleSide, transparent: true, opacity: 0.95 })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      tgt.add(ring);
+      const core = new THREE.Mesh(
+        new THREE.CircleGeometry(0.018, 16),
+        new THREE.MeshBasicMaterial({ color: 0xfef08a, side: THREE.DoubleSide })
+      );
+      core.rotation.x = -Math.PI / 2;
+      core.position.y = 0.001;
+      tgt.add(core);
+      aimTarget = tgt;
+      aimTarget.visible = false;
+      scene.add(aimTarget);
+
+      const stickGeo = new THREE.CylinderGeometry(0.007, 0.011, 1.2, 10);
+      cueStick = new THREE.Mesh(
+        stickGeo,
+        new THREE.MeshStandardMaterial({ color: 0xc4a574, roughness: 0.35, metalness: 0.1 })
+      );
+      cueStick.visible = false;
+      scene.add(cueStick);
+
+      // 플레이 가능 영역 점선 원
+      const ringPts = [];
+      const ringR = BALL_R * 3.2;
+      for (let i = 0; i <= 64; i++) {
+        const a = (i / 64) * Math.PI * 2;
+        ringPts.push(new THREE.Vector3(Math.cos(a) * ringR, 0.002, Math.sin(a) * ringR));
+      }
+      playRing = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(ringPts),
+        new THREE.LineDashedMaterial({
+          color: 0x7dd3fc, transparent: true, opacity: 0.75,
+          dashSize: 0.025, gapSize: 0.018
+        })
+      );
+      playRing.computeLineDistances();
+      playRing.visible = false;
+      scene.add(playRing);
+
+      // 당점 마커
+      tipMarker = new THREE.Mesh(
+        new THREE.SphereGeometry(BALL_R * 0.18, 12, 12),
+        new THREE.MeshBasicMaterial({ color: 0xff4444 })
+      );
+      tipMarker.visible = false;
+      scene.add(tipMarker);
+
+      // 당점 가이드 (공 앞면 원 + 십자)
+      const guideGrp = new THREE.Group();
+      const face = new THREE.Mesh(
+        new THREE.CircleGeometry(BALL_R * 0.95, 32),
+        new THREE.MeshBasicMaterial({
+          color: 0xffffff, transparent: true, opacity: 0.2,
+          side: THREE.DoubleSide, depthTest: false
+        })
+      );
+      guideGrp.add(face);
+      const crossMat = new THREE.LineBasicMaterial({ color: 0xffcc00, transparent: true, opacity: 0.7, depthTest: false });
+      const hCross = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-BALL_R * 0.85, 0, 0.001),
+        new THREE.Vector3(BALL_R * 0.85, 0, 0.001)
+      ]);
+      const vCross = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, -BALL_R * 0.85, 0.001),
+        new THREE.Vector3(0, BALL_R * 0.85, 0.001)
+      ]);
+      guideGrp.add(new THREE.Line(hCross, crossMat));
+      guideGrp.add(new THREE.Line(vCross, crossMat));
+      // 상하좌우 라벨 느낌의 작은 점
+      [[0, 0.7], [0, -0.7], [-0.7, 0], [0.7, 0]].forEach(([lx, ly]) => {
+        const dot = new THREE.Mesh(
+          new THREE.CircleGeometry(BALL_R * 0.08, 8),
+          new THREE.MeshBasicMaterial({ color: 0xffcc00, transparent: true, opacity: 0.85, depthTest: false })
+        );
+        dot.position.set(lx * BALL_R, ly * BALL_R, 0.002);
+        guideGrp.add(dot);
+      });
+      tipGuide = guideGrp;
+      tipGuide.visible = false;
+      scene.add(tipGuide);
+    }
+
+    function updatePlayRing() {
+      if (!playRing) return;
+      const canPlay = allBallsSleeping() && !winner && shotPhase === 'idle' &&
+        (!isOnline || currentPlayer === myPlayerSlot);
+      const cue = getCueBall();
+      if (!canPlay || !cue) {
+        playRing.visible = false;
+        return;
+      }
+      const t = cue.body.translation();
+      playRing.position.set(t.x, 0.002, t.z);
+      playRing.visible = true;
+    }
+
+    function updateTipMarker(cuePos) {
+      if (!tipMarker) return;
+      // 조준 단계에서만 3D 마커 (큐가 맞는 면)
+      if (shotPhase !== 'aim') {
+        tipMarker.visible = false;
+        return;
+      }
+      const ox = tipOffset.x * BALL_R * 0.9;
+      const oy = tipOffset.y * BALL_R * 0.9;
+      const faceDir = aimDir.clone().normalize().multiplyScalar(-1);
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), faceDir).normalize();
+      if (right.lengthSq() < 0.01) right.set(1, 0, 0);
+      const up = new THREE.Vector3().crossVectors(faceDir, right).normalize();
+      tipMarker.position.set(
+        cuePos.x + faceDir.x * BALL_R + right.x * ox + up.x * oy,
+        cuePos.y + faceDir.y * BALL_R + right.y * ox + up.y * oy,
+        cuePos.z + faceDir.z * BALL_R + right.z * ox + up.z * oy
+      );
+      tipMarker.visible = true;
+    }
+
+    function positionTipOverlay(cuePos) {
+      if (!tipOverlay) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      const v = cuePos.clone().project(camera);
+      const x = (v.x * 0.5 + 0.5) * rect.width + rect.left;
+      const y = (-v.y * 0.5 + 0.5) * rect.height + rect.top;
+      tipOverlay.style.left = x + 'px';
+      tipOverlay.style.top = y + 'px';
+    }
+
+    function showTipOverlay(cuePos) {
+      positionTipOverlay(cuePos);
+      tipOverlay.classList.add('show');
+      tipOverlay.setAttribute('aria-hidden', 'false');
+      setTipDotFromOffset(0, 0);
+    }
+
+    function hideTipOverlay() {
+      tipOverlay.classList.remove('show');
+      tipOverlay.setAttribute('aria-hidden', 'true');
+    }
+
+    function setTipDotFromOffset(tx, ty) {
+      // 오버레이 원 안에서 점 위치 (50% ± 45%)
+      const px = 50 + tx * 45;
+      const py = 50 - ty * 45; // ty+ = 상단 = 화면 위
+      tipDotEl.style.left = px + '%';
+      tipDotEl.style.top = py + '%';
+    }
+
+    // 2D 오버레이 기준 당점 (터치/마우스와 1:1)
+    function tipOffsetFromOverlayEvent(e) {
+      const rect = tipOverlay.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const clientX = e.clientX ?? (e.touches && e.touches[0]?.clientX);
+      const clientY = e.clientY ?? (e.touches && e.touches[0]?.clientY);
+      if (clientX == null) return { x: 0, y: 0 };
+      let tx = (clientX - cx) / (rect.width / 2);
+      let ty = -(clientY - cy) / (rect.height / 2);
+      const len = Math.hypot(tx, ty);
+      if (len > 0.95) { tx *= 0.95 / len; ty *= 0.95 / len; }
+      return { x: tx, y: ty };
+    }
+
+    function syncAimDirFromYaw() {
+      aimDir.set(Math.sin(aimYaw), 0, Math.cos(aimYaw)).normalize();
+    }
+
+    function updateTipGuide(cuePos) {
+      if (!tipGuide) return;
+      // 카메라를 향한 공 앞면에 가이드 배치
+      const toCam = new THREE.Vector3().subVectors(camera.position, cuePos).normalize();
+      tipGuide.position.copy(cuePos).add(toCam.clone().multiplyScalar(BALL_R * 1.05));
+      tipGuide.lookAt(camera.position);
+      tipGuide.visible = shotPhase === 'tip';
+    }
+
+    function updateAimVisuals(cuePos) {
+      if (!aimLine || !cueStick) return;
+
+      const maxP = getMaxPower();
+      const powerRatio = maxP > 0 ? Math.min(1, currentPower / maxP) : 0;
+      // 조준선은 항상 길게 — 어디로 가는지 잘 보이게
+      const len = 1.15 + powerRatio * 0.55;
+      const dir = aimDir.clone().normalize();
+      const start = cuePos.clone();
+      start.y = cuePos.y + 0.002;
+      const end = start.clone().add(dir.clone().multiplyScalar(len));
+
+      aimLine.geometry.setFromPoints([start, end]);
+      aimLine.geometry.attributes.position.needsUpdate = true;
+      // 조준 중 밝은 노랑, 파워 차면 주황→빨강
+      if (!aimLocked || powerRatio < 0.05) {
+        aimLine.material.color.setHex(0xfff176);
+        aimLine.material.opacity = 1;
+      } else if (powerRatio < 0.5) {
+        aimLine.material.color.setRGB(1, 0.85 - powerRatio * 0.3, 0.2);
+        aimLine.material.opacity = 1;
+      } else {
+        aimLine.material.color.setRGB(1, 0.35, 0.15);
+        aimLine.material.opacity = 1;
+      }
+      aimLine.visible = shotPhase === 'aim';
+
+      // 바닥 가이드선 (더 선명)
+      if (aimGround) {
+        const g0 = new THREE.Vector3(cuePos.x, 0.005, cuePos.z);
+        const g1 = g0.clone().add(dir.clone().multiplyScalar(len));
+        aimGround.geometry.setFromPoints([g0, g1]);
+        aimGround.geometry.attributes.position.needsUpdate = true;
+        aimGround.material.color.setHex(aimLocked ? 0xf97316 : 0x22d3ee);
+        aimGround.visible = shotPhase === 'aim';
+      }
+
+      // 타겟 링 — 조준 끝
+      if (aimTarget) {
+        aimTarget.position.set(end.x, 0.006, end.z);
+        aimTarget.visible = shotPhase === 'aim';
+      }
+
+      // 파워에 비례해 큐를 뒤로 당김
+      const tipGap = 0.04;
+      const basePull = 0.58 + tipGap;
+      const extraPull = (0.15 + powerRatio * 0.72) * playerSettings.cuePull;
+      const powerPull = basePull + extraPull;
+      const back = dir.clone().multiplyScalar(-powerPull);
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
+      const handLift = 0.018 + Math.abs(tipOffset.y) * 0.012;
+      cueStick.position.set(
+        cuePos.x + back.x + right.x * 0.045,
+        cuePos.y + handLift,
+        cuePos.z + back.z + right.z * 0.045
+      );
+      if (shotPhase === 'aim') updateTipMarker(cuePos);
+      const tipWorld = tipMarker && tipMarker.visible ? tipMarker.position.clone() : cuePos.clone();
+      const stickDir = new THREE.Vector3().subVectors(tipWorld, cueStick.position).normalize();
+      if (stickDir.lengthSq() > 0.01) {
+        cueStick.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), stickDir);
+      } else {
+        cueStick.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      }
+      cueStick.visible = shotPhase === 'aim';
+    }
+
+    function hideAimVisuals() {
+      if (aimLine) aimLine.visible = false;
+      if (aimGround) aimGround.visible = false;
+      if (aimTarget) aimTarget.visible = false;
+      if (cueStick) cueStick.visible = false;
+      if (tipMarker) tipMarker.visible = false;
+      if (tipGuide) tipGuide.visible = false;
+      powerWrap.style.display = 'none';
+      currentPower = 0;
+      powerBar.style.width = '0%';
+    }
+
+    function resetShotPhase() {
+      shotPhase = 'idle';
+      isAiming = false;
+      isCharging = false;
+      aimLocked = false;
+      chargeStart = null;
+      aimDragOrigin = null;
+      aimMoveLastX = null;
+      tipOffset = { x: 0, y: 0 };
+      releaseAimPointerLock();
+      controls.enabled = true;
+      hideTipOverlay();
+      hideAimVisuals();
+      // ESC 취소 시에는 탑뷰로 (어색한 조준 시점 유지 방지)
+      setTopView();
+    }
+
+    // 당점 → 토크 (상=전진회전, 하=당김, 좌우=사이드)
+    function tipToTorque(power) {
+      const dir = aimDir.clone().normalize();
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
+      const spin = power * 0.022;
+      // tipOffset.y > 0 상단 → topspin (전진), < 0 하단 → backspin
+      // tipOffset.x > 0 우측 → 우측 사이드, < 0 좌측
+      return {
+        x: right.x * (-tipOffset.y) * spin + dir.x * tipOffset.x * spin * 0.25,
+        y: tipOffset.x * spin * 1.35,
+        z: right.z * (-tipOffset.y) * spin + dir.z * tipOffset.x * spin * 0.25
+      };
+    }
+
+    function enterTipPhase() {
+      shotPhase = 'tip';
+      tipOffset = { x: 0, y: 0 };
+      controls.enabled = false;
+      const cue = getCueBall();
+      if (!cue) return;
+      const cuePos = new THREE.Vector3().copy(cue.body.translation());
+      savedCam = { pos: camera.position.clone(), target: controls.target.clone() };
+      const camPos = cuePos.clone().add(new THREE.Vector3(0.35, 0.28, 0.45));
+      camera.position.copy(camPos);
+      controls.target.copy(cuePos);
+      controls.update();
+      if (tipGuide) tipGuide.visible = false;
+      if (playRing) playRing.visible = false;
+      showTipOverlay(cuePos);
+      statusEl.textContent = '① 원 안을 터치해 당점 선택 (상=밀기 · 하=끌기 · 좌우=사이드)';
+    }
+
+    function enterAimPhase() {
+      shotPhase = 'aim';
+      isAiming = false;
+      isCharging = false;
+      aimLocked = false;
+      currentPower = 0;
+      aimDragOrigin = null;
+      aimMoveLastX = null;
+      postShotTopView = false;
+      hideTipOverlay();
+      const cue = getCueBall();
+      if (!cue) return;
+      const cuePos = new THREE.Vector3().copy(cue.body.translation());
+      const toCenter = new THREE.Vector3(-cuePos.x, 0, -cuePos.z);
+      if (toCenter.length() < 0.05) toCenter.set(1, 0, 0);
+      toCenter.normalize();
+      aimYaw = Math.atan2(toCenter.x, toCenter.z);
+      syncAimDirFromYaw();
+      setShotCamera(cuePos);
+      updateTipMarker(cuePos);
+      updateAimVisuals(cuePos);
+      if (tipGuide) tipGuide.visible = false;
+      // 포인터 락 → 화면 끝까지 가도 360° 연속 회전
+      setTimeout(() => requestAimPointerLock(), 50);
+      statusEl.textContent = '② 마우스 좌우로 360° 조준 · ③ 클릭 드래그로 파워 · 손 떼면 발사';
+    }
+
+    function setShotCamera(cuePos) {
+      // 실제처럼 큐 라인에 몸을 숙여 타겟을 보는 시점
+      const dir = aimDir.clone().normalize();
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
+      const dist = playerSettings.camDist;
+      const height = playerSettings.camHeight;
+      const side = playerSettings.camSide;
+      camera.position.set(
+        cuePos.x - dir.x * dist + right.x * side,
+        Math.max(0.08, cuePos.y + height),
+        cuePos.z - dir.z * dist + right.z * side
+      );
+      const lookDist = 1.6;
+      controls.target.set(
+        cuePos.x + dir.x * lookDist,
+        cuePos.y * 0.4,
+        cuePos.z + dir.z * lookDist
+      );
+      camera.near = 0.02;
+      camera.updateProjectionMatrix();
+      controls.update();
+    }
+
+    // 샷 직후 탑뷰 (이후 드래그로 자유 시점)
+    function setTopView() {
+      postShotTopView = true;
+      camera.position.set(0, 2.85, 0.05);
+      controls.target.set(0, 0.02, 0);
+      controls.enabled = true;
+      controls.update();
+      savedCam = null;
+    }
+
+    function releaseAimPointerLock() {
+      try {
+        if (document.pointerLockElement) document.exitPointerLock();
+      } catch (_) {}
+    }
+
+    function requestAimPointerLock() {
+      try {
+        const el = renderer && renderer.domElement;
+        if (el && el.requestPointerLock) el.requestPointerLock();
+      } catch (_) {}
+    }
+
+    // ========== Input ==========
+    function getCueBall() {
+      const name = PLAYER_CUE[currentPlayer];
+      return balls.find(b => b.name === name);
+    }
+
+    function allBallsSleeping() {
+      return balls.every(b => {
+        const v = b.body.linvel();
+        const speed = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        return speed < 0.02;
+      });
+    }
+
+    function getMouseWorldOnTable(e) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const target = new THREE.Vector3();
+      raycaster.ray.intersectPlane(plane, target);
+      return target;
+    }
+
+    function getMouseNdc(e) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    }
+
+    function raycastCueBall(e) {
+      const cue = getCueBall();
+      if (!cue) return null;
+      getMouseNdc(e);
+      raycaster.setFromCamera(mouse, camera);
+      const hits = raycaster.intersectObject(cue.mesh, false);
+      return hits.length ? hits[0] : null;
+    }
+
+    function onPointerDown(e) {
+      if (!document.getElementById('lobby').classList.contains('hidden')) return;
+      if (winner) return;
+      if (isOnline && currentPlayer !== myPlayerSlot) {
+        statusEl.textContent = '상대 차례입니다';
+        return;
+      }
+      if (!allBallsSleeping() && shotPhase === 'idle') return;
+      const cue = getCueBall();
+      if (!cue) return;
+      const cuePos = new THREE.Vector3().copy(cue.body.translation());
+
+      // --- 당점 선택 단계 (캔버스 클릭 시에도 오버레이 기준) ---
+      if (shotPhase === 'tip') {
+        tipOffset = tipOffsetFromOverlayEvent(e);
+        setTipDotFromOffset(tipOffset.x, tipOffset.y);
+        enterAimPhase();
+        return;
+      }
+
+      // --- ③ 클릭 후 드래그 = 파워 ---
+      if (shotPhase === 'aim') {
+        isAiming = true;
+        isCharging = true;
+        aimLocked = false;
+        chargeStart = { x: e.clientX, y: e.clientY };
+        aimDragOrigin = { x: e.clientX, y: e.clientY, yaw: aimYaw, pullAcc: 0 };
+        aimMoveLastX = e.clientX;
+        controls.enabled = false;
+        try { renderer.domElement.setPointerCapture(e.pointerId); } catch (_) {}
+        powerWrap.style.display = 'block';
+        currentPower = 0;
+        powerBar.style.width = '0%';
+        document.getElementById('power-label').textContent = 'POWER 0%';
+        statusEl.textContent = '③ 드래그로 파워 · 손 떼면 발사';
+        return;
+      }
+
+      // --- idle: 점선 원 안이면 당점, 밖이면 카메라 ---
+      const worldPos = getMouseWorldOnTable(e);
+      if (!worldPos) return;
+      const dist = Math.hypot(worldPos.x - cuePos.x, worldPos.z - cuePos.z);
+      const playR = BALL_R * 3.2;
+      if (dist <= playR) {
+        enterTipPhase();
+      }
+    }
+
+    function onPointerMove(e) {
+      if (shotPhase === 'tip') {
+        const cue = getCueBall();
+        if (cue) positionTipOverlay(new THREE.Vector3().copy(cue.body.translation()));
+        tipOffset = tipOffsetFromOverlayEvent(e);
+        setTipDotFromOffset(tipOffset.x, tipOffset.y);
+        return;
+      }
+
+      if (shotPhase !== 'aim') return;
+      const cue = getCueBall();
+      if (!cue) return;
+      const cuePos = new THREE.Vector3().copy(cue.body.translation());
+
+      // ② 버튼 안 누른 상태: 좌우 이동 = 360° 조준
+      if (!isCharging) {
+        let dx = 0;
+        if (document.pointerLockElement === renderer.domElement) {
+          // 포인터 락: 화면 밖 제한 없이 movementX로 연속 회전
+          dx = e.movementX || 0;
+        } else {
+          if (aimMoveLastX == null) {
+            aimMoveLastX = e.clientX;
+            return;
+          }
+          dx = e.clientX - aimMoveLastX;
+          aimMoveLastX = e.clientX;
+          // 창 밖 나갔다 들어오면 점프 무시
+          if (Math.abs(dx) > 80) return;
+        }
+        if (dx !== 0) {
+          aimYaw -= dx * AIM_TURN_SENS;
+          // 무제한 누적 (sin/cos로 360° 전 방향)
+          syncAimDirFromYaw();
+          setShotCamera(cuePos);
+          updateAimVisuals(cuePos);
+        }
+        return;
+      }
+
+      // ③ 파워 드래그
+      if (!aimDragOrigin) return;
+      const locked = document.pointerLockElement === renderer.domElement;
+      const mdx = e.movementX || 0;
+      const mdy = e.movementY || 0;
+      const dx = locked ? mdx : (e.clientX - aimDragOrigin.x);
+      const dy = locked ? mdy : (e.clientY - aimDragOrigin.y);
+      // 포인터락 시 이동량 누적, 아니면 시작점 거리
+      if (locked) {
+        aimDragOrigin.pullAcc += Math.hypot(mdx, mdy);
+      }
+      const dragDist = locked
+        ? aimDragOrigin.pullAcc
+        : Math.hypot(e.clientX - aimDragOrigin.x, e.clientY - aimDragOrigin.y);
+
+      if (!aimLocked && dragDist > 30) {
+        aimLocked = true;
+      }
+      if (!aimLocked) {
+        if (locked) {
+          aimYaw -= mdx * AIM_TURN_SENS;
+          aimDragOrigin.yaw = aimYaw;
+        } else {
+          aimYaw = aimDragOrigin.yaw - (e.clientX - aimDragOrigin.x) * AIM_TURN_SENS;
+        }
+        syncAimDirFromYaw();
+        setShotCamera(cuePos);
+        currentPower = 0;
+        powerBar.style.width = '0%';
+        document.getElementById('power-label').textContent = 'POWER 0% · 방향 조정';
+      } else {
+        const pull = Math.max(0, dragDist - 20);
+        const sens = Math.max(45, playerSettings.dragSens);
+        currentPower = Math.min(getMaxPower(), pull / sens);
+        const maxP = getMaxPower();
+        powerBar.style.width = (maxP > 0 ? (currentPower / maxP) * 100 : 0) + '%';
+        const pct = Math.round((maxP > 0 ? currentPower / maxP : 0) * 100);
+        document.getElementById('power-label').textContent = `POWER ${pct}%`;
+      }
+      updateAimVisuals(cuePos);
+    }
+
+    function onPointerUp(e) {
+      if (shotPhase !== 'aim' || !isCharging) return;
+
+      const cue = getCueBall();
+      if (cue && currentPower > 0.15) {
+        const impulse = {
+          x: aimDir.x * currentPower,
+          y: 0,
+          z: aimDir.z * currentPower
+        };
+        const torque = tipToTorque(currentPower);
+        cue.body.applyImpulse(impulse, true);
+        cue.body.applyTorqueImpulse(torque, true);
+        shotActive = true;
+        ballsHitThisShot.clear();
+        prevDistances = {};
+        cushionHitsThisShot = 0;
+        const tipDesc = tipOffset.y > 0.25 ? '상단' : tipOffset.y < -0.25 ? '하단' :
+          Math.abs(tipOffset.x) > 0.25 ? (tipOffset.x > 0 ? '우측' : '좌측') : '중앙';
+        statusEl.textContent = `샷! 파워 ${currentPower.toFixed(1)} · 당점 ${tipDesc}`;
+        if (isOnline) {
+          broadcast('shot', {
+            player: currentPlayer,
+            impulse: { x: impulse.x, y: 0, z: impulse.z },
+            torque,
+            tipOffset: { ...tipOffset }
+          });
+        }
+        // 샷 직후 탑뷰 고정 — 이후 드래그로 시점 변경 가능
+        shotPhase = 'idle';
+        isAiming = false;
+        isCharging = false;
+        aimLocked = false;
+        chargeStart = null;
+        aimDragOrigin = null;
+        aimMoveLastX = null;
+        releaseAimPointerLock();
+        hideAimVisuals();
+        setTopView();
+        statusEl.textContent = '샷! 탑뷰 · 드래그로 시점 변경 가능';
+      } else {
+        // 파워 부족 → 다시 좌우 조준 가능
+        isAiming = false;
+        isCharging = false;
+        aimLocked = false;
+        chargeStart = null;
+        aimDragOrigin = null;
+        aimMoveLastX = null;
+        powerWrap.style.display = 'none';
+        currentPower = 0;
+        powerBar.style.width = '0%';
+        requestAimPointerLock();
+        statusEl.textContent = '② 마우스 좌우로 360° 조준 · ③ 클릭 드래그로 파워';
+      }
+    }
+
+
+    function renderBeads(player) {
+      const el = document.getElementById(`p${player}-beads`);
+      if (!el) return;
+      el.innerHTML = '';
+      const sc = scores[player];
+      for (let i = 0; i < SCORE_TARGET; i++) {
+        const d = document.createElement('div');
+        d.className = 'bead';
+        if (i < sc) d.classList.add('scored'); // 왼쪽(득점)으로 당겨온 알
+        el.appendChild(d);
+      }
+      // 확인 득점 대기 중이면 빨간 알 하나 추가
+      if (needConfirm[player]) {
+        const d = document.createElement('div');
+        d.className = 'bead confirm';
+        d.title = '확인 득점 필요';
+        el.appendChild(d);
+      }
+    }
+
+    function updateScoreUI() {
+      const t = document.getElementById('target-val');
+      if (t) t.textContent = String(SCORE_TARGET);
+      document.getElementById('p1-score').textContent = scores[1];
+      document.getElementById('p2-score').textContent = scores[2];
+      renderBeads(1);
+      renderBeads(2);
+
+      document.getElementById('p1-block').classList.toggle('active', currentPlayer === 1 && !winner);
+      document.getElementById('p2-block').classList.toggle('active', currentPlayer === 2 && !winner);
+
+      const turnEl = document.getElementById('turn-info');
+      if (winner) {
+        turnEl.textContent = `🎉 ${playerNames[winner]} 승리!`;
+      } else {
+        turnEl.textContent = `${playerNames[currentPlayer]} 차례`;
+      }
+    }
+
+    function switchPlayer() {
+      currentPlayer = currentPlayer === 1 ? 2 : 1;
+      updateScoreUI();
+    }
+
+    function detectCollisionsThisFrame() {
+      if (!shotActive) return;
+      const cue = getCueBall();
+      if (!cue) return;
+      const ct = cue.body.translation();
+      const myCue = PLAYER_CUE[currentPlayer];
+
+      balls.forEach(b => {
+        if (b.name === myCue) return;
+        const ot = b.body.translation();
+        const dx = ct.x - ot.x, dz = ct.z - ot.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        const key = b.name;
+        const prev = prevDistances[key] ?? 999;
+        if (prev > BALL_R * 2.15 && dist <= BALL_R * 2.12) {
+          ballsHitThisShot.add(b.name);
+        }
+        prevDistances[key] = dist;
+      });
+    }
+
+    function endShotIfNeeded() {
+      if (!shotActive || winner) return;
+      if (!allBallsSleeping()) return;
+
+      shotActive = false;
+      const hitCount = ballsHitThisShot.size;
+      const p = currentPlayer;
+
+      let scored = false;
+      let failMsg = '';
+
+      if (gameMode === 'three_cushion') {
+        // 3쿠션: 다른 두 공을 모두 맞히고, 큐볼 쿠션 3회 이상
+        const myCue = PLAYER_CUE[p];
+        const others = balls.filter(b => b.name !== myCue && b.mesh.visible).map(b => b.name);
+        const hitAll = others.every(n => ballsHitThisShot.has(n));
+        const cushionsOk = cushionHitsThisShot >= 3;
+        scored = hitAll && cushionsOk;
+        if (!scored) {
+          if (!hitAll && cushionsOk) failMsg = `공 미완성 (쿠션 ${cushionHitsThisShot})`;
+          else if (hitAll && !cushionsOk) failMsg = `쿠션 ${cushionHitsThisShot}/3 · 3쿠션 미달`;
+          else failMsg = `쿠션 ${cushionHitsThisShot}/3`;
+        }
+      } else {
+        // 4구: 빨강 + 빨강(red2) 모두 맞춤
+        const hitRed = ballsHitThisShot.has('red');
+        const hitRed2 = ballsHitThisShot.has('red2');
+        scored = hitRed && hitRed2;
+      }
+
+      if (scored) {
+        if (needConfirm[p]) {
+          winner = p;
+          statusEl.textContent = `🎉 ${playerNames[p]} 확인 득점! 승리!`;
+          updateScoreUI();
+        } else if (scores[p] >= SCORE_TARGET - 1) {
+          scores[p] = SCORE_TARGET;
+          needConfirm[p] = true;
+          statusEl.textContent = `${playerNames[p]} 마지막 알! 확인 득점 1회 더 필요 · 연속`;
+          updateScoreUI();
+        } else {
+          scores[p] += 1;
+          statusEl.textContent = `${playerNames[p]} 득점! (${scores[p]}/${SCORE_TARGET}) · 연속`;
+          updateScoreUI();
+        }
+      } else {
+        // 실패 → 턴 넘김
+        if (gameMode === 'fourball') {
+          const hitRed = ballsHitThisShot.has('red');
+          const hitRed2 = ballsHitThisShot.has('red2');
+          const myCue = PLAYER_CUE[p];
+          const otherCue = (myCue === 'cue') ? 'yellow' : 'cue';
+          const onlyOtherCue = ballsHitThisShot.has(otherCue) && !hitRed && !hitRed2;
+
+          if (onlyOtherCue) {
+            const before = scores[p];
+            scores[p] = Math.max(0, scores[p] - 1);
+            if (needConfirm[p]) {
+              needConfirm[p] = false;
+              scores[p] = Math.max(0, SCORE_TARGET - 1);
+            }
+            statusEl.textContent = `${playerNames[p]} 상대 공만 · 감점 ${before}→${scores[p]} · 턴 종료`;
+            updateScoreUI();
+          } else if (hitRed || hitRed2) {
+            const only = (hitRed && !hitRed2) || (!hitRed && hitRed2) ? '빨강 1개만' : '목적구 미완성';
+            statusEl.textContent = `${playerNames[p]} ${only} · 득점 실패 · 턴 종료`;
+          } else {
+            statusEl.textContent = `${playerNames[p]} 빗나감 · 턴 종료`;
+          }
+        } else {
+          statusEl.textContent = `${playerNames[p]} ${failMsg || '실패'} · 턴 종료`;
+        }
+        switchPlayer();
+        statusEl.textContent += ` → ${playerNames[currentPlayer]} 차례`;
+      }
+      ballsHitThisShot.clear();
+      if (isOnline) {
+        broadcast('sync_score', {
+          scores, needConfirm, currentPlayer, winner
+        });
+      }
+    }
+
+    function onKey(e) {
+      if (e.code === 'KeyR') resetBalls();
+      if (e.code === 'Escape') {
+        if (shotPhase !== 'idle' || isCharging || isAiming) {
+          resetShotPhase();
+          statusEl.textContent = '취소됨 · 점선 원 안을 클릭하여 다시 시작';
+        }
+      }
+    }
+
+    function resetBalls() {
+      let pos;
+      if (gameMode === 'three_cushion') {
+        // 3쿠션: 흰·노랑·빨강 (red2 숨김)
+        pos = [
+          { name: 'cue',    x: -0.55, z: 0.20 },
+          { name: 'yellow', x: -0.55, z: -0.20 },
+          { name: 'red',    x: 0.45,  z: 0 },
+          { name: 'red2',   x: 0, z: 0 },
+        ];
+      } else {
+        // 4구: 흰·노랑(수구) + 빨강·빨강(목적구)
+        pos = [
+          { name: 'cue',    x: -0.60, z: 0.15 },
+          { name: 'yellow', x: -0.60, z: -0.15 },
+          { name: 'red',    x: 0.40,  z: 0.22 },
+          { name: 'red2',   x: 0.40,  z: -0.22 },
+        ];
+      }
+      balls.forEach(b => {
+        const p = pos.find(x => x.name === b.name);
+        if (gameMode === 'three_cushion' && b.name === 'red2') {
+          b.body.setTranslation({ x: 0, y: -1, z: 0 }, true);
+          b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+          b.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+          b.body.sleep();
+          b.mesh.visible = false;
+          return;
+        }
+        b.mesh.visible = true;
+        b.body.setTranslation({ x: p.x, y: BALL_Y, z: p.z }, true);
+        b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        b.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        b.body.wakeUp();
+      });
+      resetShotPhase();
+      shotActive = false;
+      ballsHitThisShot.clear();
+      cushionHitsThisShot = 0;
+      createBallLabels();
+      statusEl.textContent = '공 리셋 · 점수/차례 유지';
+      updateScoreUI();
+    }
+
+
+    // 수동 쿠션 반사 (Rapier 반발이 약할 때 보조)
+    function manualCushionBounce() {
+      const limitX = TABLE_LENGTH / 2 - BALL_R;
+      const limitZ = TABLE_WIDTH / 2 - BALL_R;
+      const e = CUSHION_REST; // 반발계수
+
+      balls.forEach(b => {
+        const t = b.body.translation();
+        const v = b.body.linvel();
+        let vx = v.x, vy = v.y, vz = v.z;
+        let x = t.x, z = t.z;
+        let bounced = false;
+
+        // 긴 쪽 쿠션 (Z 방향)
+        if (z > limitZ && vz > 0) {
+          z = limitZ;
+          vz = -vz * e;
+          bounced = true;
+        } else if (z < -limitZ && vz < 0) {
+          z = -limitZ;
+          vz = -vz * e;
+          bounced = true;
+        }
+
+        // 짧은 쪽 쿠션 (X 방향)
+        if (x > limitX && vx > 0) {
+          x = limitX;
+          vx = -vx * e;
+          bounced = true;
+        } else if (x < -limitX && vx < 0) {
+          x = -limitX;
+          vx = -vx * e;
+          bounced = true;
+        }
+
+        if (bounced) {
+          b.body.setTranslation({ x, y: t.y, z }, true);
+          b.body.setLinvel({ x: vx, y: vy, z: vz }, true);
+          // 3쿠션: 현재 큐볼의 쿠션 히트 카운트
+          if (shotActive && b.name === PLAYER_CUE[currentPlayer]) {
+            cushionHitsThisShot += 1;
+          }
+        }
+      });
+    }
+
+    // Safety: keep balls inside table without killing energy too hard
+    function containBalls() {
+      const limitX = TABLE_LENGTH / 2 - BALL_R - 0.008;
+      const limitZ = TABLE_WIDTH / 2 - BALL_R - 0.008;
+
+      balls.forEach(b => {
+        const t = b.body.translation();
+        let x = t.x, y = t.y, z = t.z;
+        let vx = b.body.linvel().x;
+        let vy = b.body.linvel().y;
+        let vz = b.body.linvel().z;
+        let changed = false;
+
+        if (x > limitX)  { x = limitX;  if (vx > 0) vx = -Math.abs(vx) * 0.7; changed = true; }
+        if (x < -limitX) { x = -limitX; if (vx < 0) vx =  Math.abs(vx) * 0.7; changed = true; }
+        if (z > limitZ)  { z = limitZ;  if (vz > 0) vz = -Math.abs(vz) * 0.7; changed = true; }
+        if (z < -limitZ) { z = -limitZ; if (vz < 0) vz =  Math.abs(vz) * 0.7; changed = true; }
+        if (y > 0.35)    { y = BALL_Y;  vy = 0; changed = true; }
+        if (y < BALL_Y - 0.005) { y = BALL_Y; if (vy < 0) vy = 0; changed = true; }
+
+        if (changed) {
+          b.body.setTranslation({ x, y, z }, true);
+          b.body.setLinvel({ x: vx, y: vy, z: vz }, true);
+        }
+      });
+    }
+
+    function onResize() {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    }
+
+    // ========== Loop ==========
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.033);
+      world.timestep = dt;
+      world.step();
+
+      balls.forEach(b => {
+        const t = b.body.translation();
+        const r = b.body.rotation();
+        b.mesh.position.set(t.x, t.y, t.z);
+        b.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+      });
+
+      manualCushionBounce();
+      containBalls();
+      detectCollisionsThisFrame();
+      endShotIfNeeded();
+      updateBallLabelPositions();
+      updateBallLabelText();
+      updatePlayRing();
+
+      if (shotPhase === 'idle' && !shotActive) {
+        if (allBallsSleeping()) {
+          if (statusEl.textContent.includes('이동')) {
+            statusEl.textContent = '준비 · 점선 원 안 클릭(당점) · 원 밖은 카메라';
+          }
+        }
+      } else if (shotActive && !allBallsSleeping()) {
+        statusEl.textContent = '공 이동 중...';
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+
+
+    function createBallLabels() {
+      const wrap = document.getElementById('ball-labels');
+      wrap.innerHTML = '';
+      labelEls = {};
+      const p2ball = PLAYER_CUE[2];
+      [
+        { name: 'cue', player: 1 },
+        { name: p2ball, player: 2 },
+      ].forEach(({ name, player }) => {
+        if (labelEls[name]) return;
+        const el = document.createElement('div');
+        el.className = 'ball-label p' + player;
+        el.id = 'label-' + name;
+        wrap.appendChild(el);
+        labelEls[name] = el;
+      });
+      updateBallLabelText();
+    }
+
+    function updateBallLabelText() {
+      const p2ball = PLAYER_CUE[2];
+      if (labelEls.cue) {
+        labelEls.cue.innerHTML = playerNames[1] + (currentPlayer === 1 && !winner ? '<span class="turn-mark">◀</span>' : '');
+      }
+      if (labelEls[p2ball]) {
+        labelEls[p2ball].innerHTML = playerNames[2] + (currentPlayer === 2 && !winner ? '<span class="turn-mark">◀</span>' : '');
+      }
+      const p1l = document.getElementById('p1-label');
+      const p2l = document.getElementById('p2-label');
+      if (p1l) p1l.textContent = playerNames[1];
+      if (p2l) p2l.textContent = playerNames[2];
+    }
+
+    function updateBallLabelPositions() {
+      if (!renderer) return;
+      const canvas = renderer.domElement;
+      const rect = canvas.getBoundingClientRect();
+      const show = new Set([PLAYER_CUE[1], PLAYER_CUE[2]]);
+      balls.forEach(b => {
+        const el = labelEls[b.name];
+        if (!el) return;
+        if (!show.has(b.name) || !b.mesh.visible) { el.style.display = 'none'; return; }
+        const pos = b.mesh.position.clone();
+        pos.y += BALL_R + 0.02;
+        pos.project(camera);
+        if (pos.z > 1) { el.style.display = 'none'; return; }
+        const x = (pos.x * 0.5 + 0.5) * rect.width + rect.left;
+        const y = (-pos.y * 0.5 + 0.5) * rect.height + rect.top;
+        el.style.display = 'block';
+        el.style.left = x + 'px';
+        el.style.top = (y - 8) + 'px';
+      });
+    }
+
+
+    function spawnTossSparks() {
+      const box = document.getElementById('toss-sparks');
+      if (!box) return;
+      box.innerHTML = '';
+      for (let i = 0; i < 20; i++) {
+        const s = document.createElement('i');
+        s.style.left = (35 + Math.random() * 30) + '%';
+        s.style.top = (40 + Math.random() * 25) + '%';
+        s.style.background = Math.random() > 0.5 ? '#fbbf24' : '#7dd3fc';
+        box.appendChild(s);
+        const dx = (Math.random() - 0.5) * 140;
+        const dy = -50 - Math.random() * 90;
+        s.animate([
+          { transform: 'translate(0,0) scale(1)', opacity: 1 },
+          { transform: `translate(${dx}px,${dy}px) scale(0)`, opacity: 0 }
+        ], { duration: 600 + Math.random() * 500, easing: 'cubic-bezier(0.2,0.6,0.3,1)' });
+      }
+    }
+
+
+    function runCoinToss(opts = {}) {
+      const forcedFirst = opts.forcedFirst || null;
+      const waitForRemote = !!opts.waitForRemote;
+      return new Promise((resolve) => {
+        const overlay = document.getElementById('coin-toss');
+        const result = document.getElementById('toss-result');
+        const btn = document.getElementById('toss-confirm');
+        const canvas = document.getElementById('coin-canvas');
+
+        document.getElementById('toss-name1').textContent = playerNames[1];
+        document.getElementById('toss-name2').textContent = playerNames[2];
+
+        overlay.classList.add('show');
+        result.classList.remove('reveal');
+        result.textContent = waitForRemote ? '호스트와 함께 토스 중...' : '코인 토스 중...';
+        result.style.color = '#94a3b8';
+        btn.classList.remove('show');
+
+        // 레이아웃 확정 후 크기 측정
+        requestAnimationFrame(() => {
+          const rect = canvas.parentElement.getBoundingClientRect();
+          const w = Math.max(280, Math.floor(rect.width) || 320);
+          const h = Math.max(180, Math.floor(rect.height) || 200);
+          const pr = Math.min(window.devicePixelRatio || 1, 2);
+          canvas.width = w * pr;
+          canvas.height = h * pr;
+          canvas.style.width = w + 'px';
+          canvas.style.height = h + 'px';
+
+          const tScene = new THREE.Scene();
+          tScene.background = new THREE.Color(0x101820);
+
+          const tCam = new THREE.PerspectiveCamera(45, w / h, 0.05, 30);
+          tCam.position.set(0.35, 0.65, 0.95);
+          tCam.lookAt(0, 0.08, 0);
+
+          const tRen = new THREE.WebGLRenderer({ canvas, antialias: true });
+          tRen.setPixelRatio(pr);
+          tRen.setSize(w, h, false);
+          tRen.shadowMap.enabled = true;
+
+          tScene.add(new THREE.AmbientLight(0xffffff, 0.7));
+          const d1 = new THREE.DirectionalLight(0xffffff, 1.1);
+          d1.position.set(2, 4, 3);
+          d1.castShadow = true;
+          tScene.add(d1);
+          const d2 = new THREE.DirectionalLight(0xaaccff, 0.4);
+          d2.position.set(-2, 2, -1);
+          tScene.add(d2);
+
+          // 바닥
+          const floorMat = new THREE.MeshStandardMaterial({ color: 0x1b4332, roughness: 0.9 });
+          const floorMesh = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.04, 1.4), floorMat);
+          floorMesh.position.y = -0.02;
+          floorMesh.receiveShadow = true;
+          tScene.add(floorMesh);
+
+          // 코인: 얇은 원통 (Y축 = 면의)
+          const coinR = 0.13;
+          const coinH = 0.02;
+          const coinGeo = new THREE.CylinderGeometry(coinR, coinR, coinH, 64);
+
+          function faceTexture(label, bg, fg) {
+            const c = document.createElement('canvas');
+            c.width = 256; c.height = 256;
+            const g = c.getContext('2d');
+            g.fillStyle = bg;
+            g.beginPath(); g.arc(128, 128, 126, 0, Math.PI * 2); g.fill();
+            g.strokeStyle = fg; g.lineWidth = 10; g.beginPath(); g.arc(128, 128, 118, 0, Math.PI * 2); g.stroke();
+            g.fillStyle = fg;
+            g.font = 'bold 64px system-ui,sans-serif';
+            g.textAlign = 'center'; g.textBaseline = 'middle';
+            g.fillText((label || 'P').slice(0, 2).toUpperCase(), 128, 132);
+            const tex = new THREE.CanvasTexture(c);
+            if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+            return tex;
+          }
+
+          const matSide = new THREE.MeshStandardMaterial({ color: 0xb45309, metalness: 0.6, roughness: 0.35 });
+          const matFront = new THREE.MeshStandardMaterial({
+            map: faceTexture(playerNames[1], '#f59e0b', '#78350f'),
+            metalness: 0.4, roughness: 0.35
+          });
+          const matBack = new THREE.MeshStandardMaterial({
+            map: faceTexture(playerNames[2], '#38bdf8', '#0c4a6e'),
+            metalness: 0.4, roughness: 0.35
+          });
+          // groups: 0 side, 1 top(+Y)=P1, 2 bottom(-Y)=P2
+          const coinMesh = new THREE.Mesh(coinGeo, [matSide, matFront, matBack]);
+          coinMesh.castShadow = true;
+          coinMesh.position.set(0, 0.5, 0);
+          tScene.add(coinMesh);
+
+          // 물리
+          const tWorld = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+          const floorBody = tWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.02, 0));
+          tWorld.createCollider(
+            RAPIER.ColliderDesc.cuboid(0.7, 0.02, 0.7).setFriction(0.95).setRestitution(0.45),
+            floorBody
+          );
+
+          const coinBody = tWorld.createRigidBody(
+            RAPIER.RigidBodyDesc.dynamic()
+              .setTranslation(0, 0.5, 0)
+              .setLinearDamping(0.2)
+              .setAngularDamping(0.05)
+              .setCcdEnabled(true)
+          );
+          // Rapier cylinder: halfHeight, radius (Y-aligned)
+          tWorld.createCollider(
+            RAPIER.ColliderDesc.cylinder(coinH / 2, coinR)
+              .setMass(0.05)
+              .setFriction(0.8)
+              .setRestitution(0.5),
+            coinBody
+          );
+
+          // 토스
+          coinBody.applyImpulse({
+            x: (Math.random() - 0.5) * 0.15,
+            y: 0.7 + Math.random() * 0.2,
+            z: (Math.random() - 0.5) * 0.15
+          }, true);
+          coinBody.applyTorqueImpulse({
+            x: (Math.random() < 0.5 ? 1 : -1) * (0.02 + Math.random() * 0.015),
+            y: (Math.random() - 0.5) * 0.01,
+            z: 0.025 + Math.random() * 0.02
+          }, true);
+
+          let settled = 0;
+          let finished = false;
+          const t0 = performance.now();
+
+          function whichFace() {
+            const q = coinBody.rotation();
+            const quat = new THREE.Quaternion(q.x, q.y, q.z, q.w);
+            const localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
+            return localUp.y >= 0 ? 1 : 2;
+          }
+
+          function frame() {
+            if (finished) return;
+            tWorld.timestep = 1 / 60;
+            tWorld.step();
+
+            const tr = coinBody.translation();
+            const rot = coinBody.rotation();
+            coinMesh.position.set(tr.x, tr.y, tr.z);
+            coinMesh.quaternion.set(rot.x, rot.y, rot.z, rot.w);
+
+            // 무대 안으로 제한
+            if (Math.abs(tr.x) > 0.55 || Math.abs(tr.z) > 0.55 || tr.y < -0.5) {
+              coinBody.setTranslation({
+                x: Math.max(-0.4, Math.min(0.4, tr.x)),
+                y: Math.max(coinH, tr.y),
+                z: Math.max(-0.4, Math.min(0.4, tr.z))
+              }, true);
+              const v = coinBody.linvel();
+              coinBody.setLinvel({ x: v.x * 0.3, y: Math.max(v.y, 0), z: v.z * 0.3 }, true);
+            }
+
+            const v = coinBody.linvel();
+            const av = coinBody.angvel();
+            const spd = Math.hypot(v.x, v.y, v.z);
+            const spin = Math.hypot(av.x, av.y, av.z);
+            if (tr.y < 0.06 && spd < 0.15 && spin < 2) settled++;
+            else settled = 0;
+
+            tRen.render(tScene, tCam);
+
+            if (settled > 30 || performance.now() - t0 > 5500) {
+              finished = true;
+              const finishWith = (first) => {
+                currentPlayer = first;
+                spawnTossSparks();
+                result.textContent = playerNames[first] + ' 선공!';
+                result.classList.add('reveal');
+                result.style.color = first === 1 ? '#fde68a' : '#7dd3fc';
+                btn.classList.add('show');
+                btn.onclick = () => {
+                  overlay.classList.remove('show');
+                  try {
+                    tRen.dispose();
+                    coinGeo.dispose();
+                    matSide.dispose(); matFront.dispose(); matBack.dispose();
+                    if (matFront.map) matFront.map.dispose();
+                    if (matBack.map) matBack.map.dispose();
+                  } catch (_) {}
+                  resolve(first);
+                };
+                tRen.render(tScene, tCam);
+              };
+              if (waitForRemote) {
+                result.textContent = '결과 대기 중...';
+                window.__resolveRemoteToss = (first) => finishWith(first);
+                // 호스트 결과가 이미 왔을 수도 있음
+                return;
+              }
+              const first = forcedFirst || whichFace();
+              finishWith(first);
+              return;
+            }
+            requestAnimationFrame(frame);
+          }
+          requestAnimationFrame(frame);
+        });
+      });
+    }
+
+    // ========== Lobby / Room ==========
+
+    function generateRoomCode() {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let s = '';
+      for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)];
+      return s;
+    }
+
+    function leaveRoomChannel() {
+      if (roomChannel) {
+        supabase.removeChannel(roomChannel);
+        roomChannel = null;
+      }
+    }
+
+    function broadcast(event, payload) {
+      if (!roomChannel || !isOnline) return Promise.resolve();
+      return roomChannel.send({ type: 'broadcast', event, payload });
+    }
+
+    function applyRemoteShot(payload) {
+      // 상대가 친 샷을 로컬 물리에도 적용
+      const name = PLAYER_CUE[payload.player];
+      const ball = balls.find(b => b.name === name);
+      if (!ball) return;
+      ball.body.wakeUp();
+      ball.body.applyImpulse({
+        x: payload.impulse.x,
+        y: 0,
+        z: payload.impulse.z
+      }, true);
+      if (payload.torque) {
+        ball.body.applyTorqueImpulse(payload.torque, true);
+      }
+      if (payload.tipOffset) tipOffset = payload.tipOffset;
+      shotActive = true;
+      ballsHitThisShot.clear();
+      prevDistances = {};
+      cushionHitsThisShot = 0;
+      currentPlayer = payload.player;
+      statusEl.textContent = `${playerNames[payload.player]} 샷! (온라인)`;
+      updateScoreUI();
+      updateBallLabelText();
+    }
+
+    function subscribeRoom(code) {
+      leaveRoomChannel();
+      roomCode = code;
+      roomChannel = supabase.channel(`room:${code}`, {
+        config: { broadcast: { self: false } }
+      });
+
+      roomChannel
+        .on('broadcast', { event: 'join' }, ({ payload }) => {
+          if (!isHost) return;
+          remoteReady = true;
+          playerNames[2] = payload.name || 'Player2';
+          updateBallLabelText();
+          statusEl.textContent = `${playerNames[2]} 입장! 게임을 시작합니다...`;
+          beginGameAfterLobby(code);
+        })
+        .on('broadcast', { event: 'toss_start' }, ({ payload }) => {
+          if (isHost) return;
+          // 게스트: 호스트와 동시에 코인 토스 화면
+          if (payload.names) playerNames = payload.names;
+          if (payload.gameMode) {
+            gameMode = payload.gameMode;
+            PLAYER_CUE[1] = 'cue';
+            PLAYER_CUE[2] = 'yellow';
+          }
+          if (payload.SCORE_TARGET) SCORE_TARGET = payload.SCORE_TARGET;
+          document.getElementById('lobby').classList.add('hidden');
+          resetBalls();
+          updateBallLabelText();
+          // 결과 없이 연출만 (호스트 결과 대기)
+          runCoinToss({ waitForRemote: true });
+        })
+        .on('broadcast', { event: 'host_start' }, ({ payload }) => {
+          if (isHost) return;
+          gameMode = payload.gameMode || gameMode || 'fourball';
+          SCORE_TARGET = payload.SCORE_TARGET || SCORE_TARGET || 10;
+          playerNames = payload.names || playerNames;
+          PLAYER_CUE[1] = 'cue';
+          PLAYER_CUE[2] = 'yellow';
+          document.getElementById('lobby').classList.add('hidden');
+          resetBalls();
+          updateBallLabelText();
+          currentPlayer = payload.first || 1;
+          // 게스트 토스 화면에 결과 확정
+          if (window.__resolveRemoteToss) {
+            window.__resolveRemoteToss(currentPlayer);
+            window.__resolveRemoteToss = null;
+          } else {
+            // toss_start를 못 받은 경우 결과만 짧게 표시
+            runCoinToss({ forcedFirst: currentPlayer });
+          }
+          updateScoreUI();
+          updateBallLabelText();
+          statusEl.textContent = `방 ${code} · 온라인 · ${playerNames[currentPlayer]} 선공`;
+        })
+        .on('broadcast', { event: 'shot' }, ({ payload }) => {
+          applyRemoteShot(payload);
+        })
+        .on('broadcast', { event: 'sync_score' }, ({ payload }) => {
+          scores = payload.scores || scores;
+          needConfirm = payload.needConfirm || needConfirm;
+          currentPlayer = payload.currentPlayer || currentPlayer;
+          winner = payload.winner ?? winner;
+          updateScoreUI();
+          updateBallLabelText();
+        })
+        .subscribe((status) => {
+          console.log('Realtime', status);
+          if (status === 'SUBSCRIBED') {
+            statusEl.textContent = isHost
+              ? `방 ${code} 대기 중… 상대에게 코드 공유`
+              : `방 ${code} 입장 요청 중…`;
+          }
+        });
+    }
+
+    async function beginGameAfterLobby(code) {
+      document.getElementById('lobby').classList.add('hidden');
+      resetBalls();
+      updateBallLabelText();
+      // 온라인: 게스트에게 토스 시작을 먼저 알림
+      if (isOnline && isHost) {
+        await broadcast('toss_start', {
+          names: playerNames,
+          gameMode,
+          SCORE_TARGET
+        });
+      }
+      const first = await runCoinToss();
+      currentPlayer = first;
+      updateScoreUI();
+      updateBallLabelText();
+      statusEl.textContent = `방 ${code} · ${gameMode === 'three_cushion' ? '3쿠션' : '4구'} · ${SCORE_TARGET}점 · ${playerNames[first]} 선공`;
+      if (isOnline && isHost) {
+        await broadcast('host_start', {
+          gameMode,
+          SCORE_TARGET,
+          names: playerNames,
+          first
+        });
+      }
+    }
+
+    function readLobbySettings() {
+      const sel = document.getElementById('lobby-target');
+      SCORE_TARGET = parseInt(sel.value, 10) || 10;
+      const modeEl = document.querySelector('#mode-chips input[name="mode"]:checked');
+      gameMode = modeEl ? modeEl.value : 'fourball';
+      const n1 = (document.getElementById('name-p1').value || 'Player1').trim().slice(0, 10);
+      const n2 = (document.getElementById('name-p2').value || 'Player2').trim().slice(0, 10);
+      playerNames = { 1: n1 || 'Player1', 2: n2 || 'Player2' };
+      PLAYER_CUE[1] = 'cue';
+      PLAYER_CUE[2] = 'yellow';
+      scores = { 1: 0, 2: 0 };
+      needConfirm = { 1: false, 2: false };
+      winner = null;
+      shotActive = false;
+      ballsHitThisShot.clear();
+      cushionHitsThisShot = 0;
+    }
+
+    // 로컬만
+    async function startLocalGame() {
+      isOnline = false;
+      isHost = true;
+      myPlayerSlot = 1;
+      leaveRoomChannel();
+      readLobbySettings();
+      let code = (document.getElementById('lobby-code').value || '').trim().toUpperCase();
+      if (!code) code = generateRoomCode();
+      document.getElementById('lobby-code').value = code;
+      const view = document.getElementById('room-code-view');
+      view.style.display = 'block';
+      view.textContent = code;
+      await beginGameAfterLobby(code);
+    }
+
+    // 온라인 호스트
+    async function startOnlineHost() {
+      isOnline = true;
+      isHost = true;
+      myPlayerSlot = 1;
+      remoteReady = false;
+      readLobbySettings();
+      let code = (document.getElementById('lobby-code').value || '').trim().toUpperCase();
+      if (!code) code = generateRoomCode();
+      document.getElementById('lobby-code').value = code;
+      const view = document.getElementById('room-code-view');
+      view.style.display = 'block';
+      view.textContent = code;
+      subscribeRoom(code);
+      statusEl.textContent = `방 ${code} 생성됨 · 상대 입장 대기 (로컬로 먼저 하려면 빠른 시작)`;
+      // 호스트도 대기만 — 상대 join 시 자동 시작. 30초 후에도 없으면 안내
+      setTimeout(() => {
+        if (isOnline && isHost && !remoteReady && !document.getElementById('lobby').classList.contains('hidden')) {
+          statusEl.textContent = `방 ${code} 대기 중… 코드 공유 또는 빠른 시작(로컬)`;
+        }
+      }, 1500);
+    }
+
+    // 온라인 참가
+    async function joinOnlineRoom() {
+      let code = (document.getElementById('lobby-code').value || '').trim().toUpperCase();
+      if (!code || code.length < 4) {
+        alert('참가할 방 코드를 입력하세요.');
+        return;
+      }
+      isOnline = true;
+      isHost = false;
+      myPlayerSlot = 2;
+      readLobbySettings();
+      // 참가자는 이름2를 자신의 이름으로
+      const n = (document.getElementById('name-p2').value || document.getElementById('name-p1').value || 'Player2').trim().slice(0, 10);
+      playerNames[2] = n || 'Player2';
+      document.getElementById('room-code-view').style.display = 'block';
+      document.getElementById('room-code-view').textContent = code;
+      subscribeRoom(code);
+      // 구독 후 join 신호
+      setTimeout(() => {
+        broadcast('join', { name: playerNames[2], slot: 2 });
+        statusEl.textContent = `방 ${code} 입장 요청 완료 · 호스트 시작 대기`;
+      }, 500);
+    }
+
+    document.getElementById('btn-create').addEventListener('click', startOnlineHost);
+    document.getElementById('btn-join-local').addEventListener('click', startLocalGame);
+    document.getElementById('btn-join-online').addEventListener('click', joinOnlineRoom);
+
+    // ----- 개인 설정 UI -----
+    function sensLabel(v) {
+      if (v <= 65) return '매우 민감';
+      if (v <= 85) return '민감';
+      if (v <= 110) return '보통';
+      if (v <= 135) return '둔감';
+      return '매우 둔감';
+    }
+    function refreshSettingsUI() {
+      const ps = document.getElementById('set-power-scale');
+      const ds = document.getElementById('set-drag-sens');
+      const cp = document.getElementById('set-cue-pull');
+      const cd = document.getElementById('set-cam-dist');
+      const ch = document.getElementById('set-cam-height');
+      if (!ps) return;
+      ps.value = Math.round(playerSettings.powerScale * 100);
+      ds.value = playerSettings.dragSens;
+      cp.value = Math.round(playerSettings.cuePull * 100);
+      if (cd) cd.value = Math.round(playerSettings.camDist * 100);
+      if (ch) ch.value = Math.round(playerSettings.camHeight * 100);
+      document.getElementById('set-power-val').textContent = ps.value + '%';
+      document.getElementById('set-sens-val').textContent = sensLabel(+ds.value);
+      document.getElementById('set-pull-val').textContent = cp.value + '%';
+      if (cd) {
+        const v = +cd.value;
+        document.getElementById('set-camdist-val').textContent =
+          v <= 40 ? '매우 가깝게' : v <= 60 ? '가깝게' : v <= 80 ? '보통' : '멀리';
+      }
+      if (ch) {
+        const v = +ch.value;
+        document.getElementById('set-camh-val').textContent =
+          v <= 12 ? '낮음' : v <= 22 ? '보통' : '높음';
+      }
+    }
+    function bindSettingsUI() {
+      const panel = document.getElementById('settings-panel');
+      const btn = document.getElementById('btn-settings');
+      loadPlayerSettings();
+      refreshSettingsUI();
+      btn.addEventListener('click', () => {
+        const open = !panel.classList.contains('open');
+        panel.classList.toggle('open', open);
+        panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+        if (open) refreshSettingsUI();
+      });
+      document.getElementById('set-close').addEventListener('click', () => {
+        panel.classList.remove('open');
+        panel.setAttribute('aria-hidden', 'true');
+      });
+      document.getElementById('set-reset').addEventListener('click', () => {
+        playerSettings.powerScale = 1;
+        playerSettings.dragSens = 90;
+        playerSettings.cuePull = 1;
+        playerSettings.camDist = 0.55;
+        playerSettings.camHeight = 0.14;
+        playerSettings.camSide = 0.04;
+        savePlayerSettings();
+        refreshSettingsUI();
+      });
+      document.getElementById('set-power-scale').addEventListener('input', (e) => {
+        playerSettings.powerScale = (+e.target.value) / 100;
+        document.getElementById('set-power-val').textContent = e.target.value + '%';
+        savePlayerSettings();
+      });
+      document.getElementById('set-drag-sens').addEventListener('input', (e) => {
+        playerSettings.dragSens = +e.target.value;
+        document.getElementById('set-sens-val').textContent = sensLabel(+e.target.value);
+        savePlayerSettings();
+      });
+      document.getElementById('set-cue-pull').addEventListener('input', (e) => {
+        playerSettings.cuePull = (+e.target.value) / 100;
+        document.getElementById('set-pull-val').textContent = e.target.value + '%';
+        savePlayerSettings();
+      });
+      document.getElementById('set-cam-dist').addEventListener('input', (e) => {
+        playerSettings.camDist = (+e.target.value) / 100;
+        refreshSettingsUI();
+        savePlayerSettings();
+      });
+      document.getElementById('set-cam-height').addEventListener('input', (e) => {
+        playerSettings.camHeight = (+e.target.value) / 100;
+        refreshSettingsUI();
+        savePlayerSettings();
+      });
+    }
+    bindSettingsUI();
+
+    init().catch(e => {
+      console.error(e);
+      statusEl.textContent = '오류: ' + e.message;
+    });
+  </script>
+</body>
+</html>
