@@ -379,7 +379,7 @@
       <h2>게임 방 설정</h2>
       <p class="sub">승리 점수와 방 코드를 정한 뒤 시작하세요.<br/>온라인 매칭은 다음 업데이트에서 지원됩니다.</p>
       <div class="lobby-balls" id="lobby-balls-preview" aria-hidden="true">
-        <span class="w"></span><span class="w"></span><span class="r"></span><span class="y"></span>
+        <span class="w"></span><span class="y"></span><span class="r"></span><span class="r"></span>
       </div>
       <div class="lobby-section-title">게임 모드</div>
       <div class="score-chips" id="mode-chips" style="grid-template-columns:1fr 1fr;margin-bottom:18px;">
@@ -403,11 +403,11 @@
       <div class="lobby-section-title">플레이어 이름</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
         <div class="lobby-field" style="margin:0">
-          <label for="name-p1">P1 (흰공 A)</label>
+          <label for="name-p1">P1 (흰공)</label>
           <input id="name-p1" type="text" maxlength="10" placeholder="Player 1" value="Player1" style="letter-spacing:0;font-family:system-ui,sans-serif;text-align:left" />
         </div>
         <div class="lobby-field" style="margin:0">
-          <label for="name-p2">P2 (흰공 B)</label>
+          <label for="name-p2">P2 (노란공)</label>
           <input id="name-p2" type="text" maxlength="10" placeholder="Player 2" value="Player2" style="letter-spacing:0;font-family:system-ui,sans-serif;text-align:left" />
         </div>
       </div>
@@ -421,7 +421,7 @@
         <button class="btn-secondary" type="button" id="btn-join-online">방 참가</button>
         <button class="btn-primary" type="button" id="btn-create">방 만들기 (온라인)</button>
       </div>
-      <p class="lobby-footer" id="lobby-rule-hint">4구: 빨강+노랑 동시 접촉 = 득점</p>
+      <p class="lobby-footer" id="lobby-rule-hint">4구: 흰·노랑 수구 · 빨강 2개 맞춤 = 득점</p>
     </div>
   </div>
 
@@ -574,7 +574,8 @@
       const modeMul = gameMode === 'three_cushion' ? 0.8 : 1;
       return MAX_POWER * modeMul * playerSettings.powerScale;
     }
-    const COLORS = { cue: 0xffffff, yellow: 0xffc107, red: 0xe53935, white2: 0xf0f0f0 };
+    // 4구: 흰·노랑(플레이어) / 빨강·빨강(목적구)
+    const COLORS = { cue: 0xffffff, yellow: 0xffc107, red: 0xe53935, red2: 0xc62828 };
 
     // ========== State ==========
     let scene, camera, renderer, controls, world;
@@ -607,7 +608,7 @@
     let needConfirm = { 1: false, 2: false }; // 마지막 알 이후 확인 득점 필요
     let winner = null;
     let currentPlayer = 1;
-    const PLAYER_CUE = { 1: 'cue', 2: 'white2' }; // mutated per mode
+    const PLAYER_CUE = { 1: 'cue', 2: 'yellow' }; // 흰 / 노랑
     let playerNames = { 1: 'Player1', 2: 'Player2' };
     let gameMode = 'fourball'; // 'fourball' | 'three_cushion'
     let cushionHitsThisShot = 0;
@@ -824,10 +825,10 @@
     // ========== Balls ==========
     function createBalls() {
       const specs = [
-        { name: 'cue',    color: COLORS.cue,    x: -0.60, z: 0.15 },
-        { name: 'white2', color: COLORS.white2, x: -0.60, z: -0.15 },
-        { name: 'red',    color: COLORS.red,    x: 0.40,  z: 0.22 },
-        { name: 'yellow', color: COLORS.yellow, x: 0.40,  z: -0.22 },
+        { name: 'cue',    color: COLORS.cue,    x: -0.60, z: 0.15 },  // P1 흰
+        { name: 'yellow', color: COLORS.yellow, x: -0.60, z: -0.15 }, // P2 노랑
+        { name: 'red',    color: COLORS.red,    x: 0.40,  z: 0.22 },  // 목적구
+        { name: 'red2',   color: COLORS.red2,   x: 0.40,  z: -0.22 }, // 목적구
       ];
 
       specs.forEach((s) => {
@@ -1311,9 +1312,10 @@
         chargeStart = { x: e.clientX, y: e.clientY };
         aimDragOrigin = { x: e.clientX, y: e.clientY, yaw: aimYaw };
         controls.enabled = false;
+        try { renderer.domElement.setPointerCapture(e.pointerId); } catch (_) {}
         powerWrap.style.display = 'block';
         document.getElementById('power-label').textContent = 'POWER 0%';
-        statusEl.textContent = '좌우 조준 · 아래 당기면 파워(조준 고정)';
+        statusEl.textContent = '좌우=조준 · 아무 방향으로 당기면 파워';
         return;
       }
 
@@ -1344,16 +1346,16 @@
 
       const dx = e.clientX - aimDragOrigin.x;
       const dy = e.clientY - aimDragOrigin.y;
+      const dragDist = Math.hypot(dx, dy);
 
-      // 아래로 당기기 시작하면 조준 고정 + 파워만
-      if (!aimLocked && dy > 24) {
+      // 당김 거리 충분하면 파워 모드 (아래/위/대각 모두 인식)
+      if (!aimLocked && dragDist > 28) {
         aimLocked = true;
-        // 고정 시점의 각도 유지
         aimDragOrigin.yaw = aimYaw;
       }
 
       if (!aimLocked) {
-        // 조준만 — 카메라가 큐 라인을 따라 같이 회전 (눈으로 각도 확인)
+        // 짧은 좌우 이동 = 조준 (카메라 따라감)
         aimYaw = aimDragOrigin.yaw - dx * AIM_TURN_SENS;
         syncAimDirFromYaw();
         setShotCamera(cuePos);
@@ -1361,12 +1363,13 @@
         powerBar.style.width = '0%';
         document.getElementById('power-label').textContent = 'POWER 0% · 조준 중';
       } else if (isCharging) {
-        // 파워만 — 조준·카메라 고정
-        const pull = Math.max(0, dy - 12);
-        const sens = Math.max(55, playerSettings.dragSens * 1.2);
+        // 파워: 시작점부터 드래그한 총 거리 (방향 무관)
+        const pull = Math.max(0, dragDist - 20);
+        const sens = Math.max(45, playerSettings.dragSens);
         currentPower = Math.min(getMaxPower(), pull / sens);
-        powerBar.style.width = (currentPower / getMaxPower() * 100) + '%';
-        const pct = Math.round((currentPower / getMaxPower()) * 100);
+        const maxP = getMaxPower();
+        powerBar.style.width = (maxP > 0 ? (currentPower / maxP) * 100 : 0) + '%';
+        const pct = Math.round((maxP > 0 ? currentPower / maxP : 0) * 100);
         document.getElementById('power-label').textContent = `POWER ${pct}% · 조준 고정`;
       }
 
@@ -1520,17 +1523,10 @@
           else failMsg = `쿠션 ${cushionHitsThisShot}/3`;
         }
       } else {
-        // 4구: 빨간 + 노란
+        // 4구: 빨강 + 빨강(red2) 모두 맞춤
         const hitRed = ballsHitThisShot.has('red');
-        const hitYellow = ballsHitThisShot.has('yellow');
-        scored = hitRed && hitYellow;
-        if (!scored) {
-          const myCue = PLAYER_CUE[p];
-          const otherWhite = (myCue === 'cue') ? 'white2' : 'cue';
-          if (ballsHitThisShot.has(otherWhite) && !hitRed && !hitYellow) {
-            // 감점은 아래 기존 분기에서 처리
-          }
-        }
+        const hitRed2 = ballsHitThisShot.has('red2');
+        scored = hitRed && hitRed2;
       }
 
       if (scored) {
@@ -1552,22 +1548,22 @@
         // 실패 → 턴 넘김
         if (gameMode === 'fourball') {
           const hitRed = ballsHitThisShot.has('red');
-          const hitYellow = ballsHitThisShot.has('yellow');
+          const hitRed2 = ballsHitThisShot.has('red2');
           const myCue = PLAYER_CUE[p];
-          const otherWhite = (myCue === 'cue') ? 'white2' : 'cue';
-          const onlyOtherWhite = ballsHitThisShot.has(otherWhite) && !hitRed && !hitYellow;
+          const otherCue = (myCue === 'cue') ? 'yellow' : 'cue';
+          const onlyOtherCue = ballsHitThisShot.has(otherCue) && !hitRed && !hitRed2;
 
-          if (onlyOtherWhite) {
+          if (onlyOtherCue) {
             const before = scores[p];
             scores[p] = Math.max(0, scores[p] - 1);
             if (needConfirm[p]) {
               needConfirm[p] = false;
               scores[p] = Math.max(0, SCORE_TARGET - 1);
             }
-            statusEl.textContent = `${playerNames[p]} 상대 흰공만 · 감점 ${before}→${scores[p]} · 턴 종료`;
+            statusEl.textContent = `${playerNames[p]} 상대 공만 · 감점 ${before}→${scores[p]} · 턴 종료`;
             updateScoreUI();
-          } else if (hitRed || hitYellow) {
-            const only = hitRed ? '빨강만' : '노랑만';
+          } else if (hitRed || hitRed2) {
+            const only = (hitRed && !hitRed2) || (!hitRed && hitRed2) ? '빨강 1개만' : '목적구 미완성';
             statusEl.textContent = `${playerNames[p]} ${only} · 득점 실패 · 턴 종료`;
           } else {
             statusEl.textContent = `${playerNames[p]} 빗나감 · 턴 종료`;
@@ -1599,23 +1595,25 @@
     function resetBalls() {
       let pos;
       if (gameMode === 'three_cushion') {
+        // 3쿠션: 흰·노랑·빨강 (red2 숨김)
         pos = [
           { name: 'cue',    x: -0.55, z: 0.20 },
           { name: 'yellow', x: -0.55, z: -0.20 },
           { name: 'red',    x: 0.45,  z: 0 },
-          { name: 'white2', x: 0, z: 0 }, // 숨김
+          { name: 'red2',   x: 0, z: 0 },
         ];
       } else {
+        // 4구: 흰·노랑(수구) + 빨강·빨강(목적구)
         pos = [
           { name: 'cue',    x: -0.60, z: 0.15 },
-          { name: 'white2', x: -0.60, z: -0.15 },
+          { name: 'yellow', x: -0.60, z: -0.15 },
           { name: 'red',    x: 0.40,  z: 0.22 },
-          { name: 'yellow', x: 0.40,  z: -0.22 },
+          { name: 'red2',   x: 0.40,  z: -0.22 },
         ];
       }
       balls.forEach(b => {
         const p = pos.find(x => x.name === b.name);
-        if (gameMode === 'three_cushion' && b.name === 'white2') {
+        if (gameMode === 'three_cushion' && b.name === 'red2') {
           b.body.setTranslation({ x: 0, y: -1, z: 0 }, true);
           b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
           b.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
@@ -2108,13 +2106,8 @@
           if (payload.names) playerNames = payload.names;
           if (payload.gameMode) {
             gameMode = payload.gameMode;
-            if (gameMode === 'three_cushion') {
-              PLAYER_CUE[1] = 'cue';
-              PLAYER_CUE[2] = 'yellow';
-            } else {
-              PLAYER_CUE[1] = 'cue';
-              PLAYER_CUE[2] = 'white2';
-            }
+            PLAYER_CUE[1] = 'cue';
+            PLAYER_CUE[2] = 'yellow';
           }
           if (payload.SCORE_TARGET) SCORE_TARGET = payload.SCORE_TARGET;
           document.getElementById('lobby').classList.add('hidden');
@@ -2128,13 +2121,8 @@
           gameMode = payload.gameMode || gameMode || 'fourball';
           SCORE_TARGET = payload.SCORE_TARGET || SCORE_TARGET || 10;
           playerNames = payload.names || playerNames;
-          if (gameMode === 'three_cushion') {
-            PLAYER_CUE[1] = 'cue';
-            PLAYER_CUE[2] = 'yellow';
-          } else {
-            PLAYER_CUE[1] = 'cue';
-            PLAYER_CUE[2] = 'white2';
-          }
+          PLAYER_CUE[1] = 'cue';
+          PLAYER_CUE[2] = 'yellow';
           document.getElementById('lobby').classList.add('hidden');
           resetBalls();
           updateBallLabelText();
@@ -2207,13 +2195,8 @@
       const n1 = (document.getElementById('name-p1').value || 'Player1').trim().slice(0, 10);
       const n2 = (document.getElementById('name-p2').value || 'Player2').trim().slice(0, 10);
       playerNames = { 1: n1 || 'Player1', 2: n2 || 'Player2' };
-      if (gameMode === 'three_cushion') {
-        PLAYER_CUE[1] = 'cue';
-        PLAYER_CUE[2] = 'yellow';
-      } else {
-        PLAYER_CUE[1] = 'cue';
-        PLAYER_CUE[2] = 'white2';
-      }
+      PLAYER_CUE[1] = 'cue';
+      PLAYER_CUE[2] = 'yellow';
       scores = { 1: 0, 2: 0 };
       needConfirm = { 1: false, 2: false };
       winner = null;
