@@ -490,6 +490,16 @@
       <input type="range" id="set-cue-pull" min="50" max="150" step="5" value="100" />
       <p class="set-hint">파워에 따라 큐가 뒤로 빠지는 거리 연출 강도.</p>
     </div>
+    <div class="set-row">
+      <label>조준 거리 <span class="val" id="set-camdist-val">가깝게</span></label>
+      <input type="range" id="set-cam-dist" min="28" max="100" step="2" value="55" />
+      <p class="set-hint">큐 라인에 숙여 보는 거리. 낮을수록 공·타겟에 더 가까이.</p>
+    </div>
+    <div class="set-row">
+      <label>조준 높이 <span class="val" id="set-camh-val">낮음</span></label>
+      <input type="range" id="set-cam-height" min="6" max="40" step="1" value="14" />
+      <p class="set-hint">눈높이. 낮을수록 테이블에 붙어 각도가 잘 보임.</p>
+    </div>
     <div class="set-actions">
       <button type="button" id="set-reset">기본값</button>
       <button type="button" class="primary" id="set-close">닫기</button>
@@ -537,7 +547,10 @@
     const playerSettings = {
       powerScale: 1.0,   // 0.3~1.0 최대 파워 배율
       dragSens: 90,      // 픽셀당 파워 (작을수록 민감)
-      cuePull: 1.0       // 큐 당김 연출 배율
+      cuePull: 1.0,      // 큐 당김 연출 배율
+      camDist: 0.55,     // 조준 카메라 거리 (가깝게 숙인 시점)
+      camHeight: 0.14,   // 조준 카메라 높이
+      camSide: 0.04      // 오른손잡이 옆 오프셋
     };
     function loadPlayerSettings() {
       try {
@@ -547,6 +560,9 @@
         if (o.powerScale != null) playerSettings.powerScale = Math.min(1.0, Math.max(0.3, o.powerScale));
         if (o.dragSens) playerSettings.dragSens = Math.min(160, Math.max(50, o.dragSens));
         if (o.cuePull) playerSettings.cuePull = Math.min(1.5, Math.max(0.5, o.cuePull));
+        if (o.camDist != null) playerSettings.camDist = Math.min(1.2, Math.max(0.28, o.camDist));
+        if (o.camHeight != null) playerSettings.camHeight = Math.min(0.45, Math.max(0.06, o.camHeight));
+        if (o.camSide != null) playerSettings.camSide = Math.min(0.2, Math.max(0, o.camSide));
       } catch (_) {}
     }
     function savePlayerSettings() {
@@ -580,8 +596,10 @@
     let savedCam = null;       // 샷 카메라 복귀용
     let aimYaw = 0;            // 조준 각도 (XZ 평면, rad)
     let aimDragOrigin = null;  // 조준 드래그 시작 시 포인터/각도
-    const AIM_TURN_SENS = 0.00028; // 픽셀당 회전(rad) — 더 낮춤
+    const AIM_TURN_SENS = 0.00056; // 이전 느린 감도의 약 2배
     let aimLocked = false;         // 파워 충전 중 조준 고정
+    let aimTarget = null;          // 조준 끝 타겟 마커
+    let aimGround = null;          // 테이블 위 조준 가이드선
     const tipOverlay = document.getElementById('tip-overlay');
     const tipDotEl = document.getElementById('tip-dot');
     let SCORE_TARGET = 10;
@@ -853,10 +871,38 @@
       ]);
       aimLine = new THREE.Line(
         lineGeo,
-        new THREE.LineBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.9 })
+        new THREE.LineBasicMaterial({ color: 0xfff59d, transparent: true, opacity: 1 })
       );
       aimLine.visible = false;
       scene.add(aimLine);
+
+      // 테이블 위 굵은 조준 가이드 (시인성)
+      const gPts = [new THREE.Vector3(0, 0.004, 0), new THREE.Vector3(1, 0.004, 0)];
+      aimGround = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(gPts),
+        new THREE.LineBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.95 })
+      );
+      aimGround.visible = false;
+      scene.add(aimGround);
+
+      // 조준 끝 타겟 (원 + 화살표 느낌)
+      const tgt = new THREE.Group();
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.035, 0.055, 24),
+        new THREE.MeshBasicMaterial({ color: 0xfbbf24, side: THREE.DoubleSide, transparent: true, opacity: 0.95 })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      tgt.add(ring);
+      const core = new THREE.Mesh(
+        new THREE.CircleGeometry(0.018, 16),
+        new THREE.MeshBasicMaterial({ color: 0xfef08a, side: THREE.DoubleSide })
+      );
+      core.rotation.x = -Math.PI / 2;
+      core.position.y = 0.001;
+      tgt.add(core);
+      aimTarget = tgt;
+      aimTarget.visible = false;
+      scene.add(aimTarget);
 
       const stickGeo = new THREE.CylinderGeometry(0.007, 0.011, 1.2, 10);
       cueStick = new THREE.Mesh(
@@ -1025,49 +1071,72 @@
 
       const maxP = getMaxPower();
       const powerRatio = maxP > 0 ? Math.min(1, currentPower / maxP) : 0;
-      const len = 0.45 + powerRatio * 1.1;
+      // 조준선은 항상 길게 — 어디로 가는지 잘 보이게
+      const len = 1.15 + powerRatio * 0.55;
+      const dir = aimDir.clone().normalize();
       const start = cuePos.clone();
-      start.y = cuePos.y;
-      const end = start.clone().add(aimDir.clone().multiplyScalar(len));
+      start.y = cuePos.y + 0.002;
+      const end = start.clone().add(dir.clone().multiplyScalar(len));
 
       aimLine.geometry.setFromPoints([start, end]);
       aimLine.geometry.attributes.position.needsUpdate = true;
-      const c = new THREE.Color();
-      if (powerRatio < 0.5) c.setRGB(0.2 + powerRatio, 0.85, 0.4);
-      else c.setRGB(0.9, 0.85 - (powerRatio - 0.5) * 1.2, 0.15);
-      aimLine.material.color.copy(c);
-      aimLine.material.opacity = 0.55 + powerRatio * 0.4;
+      // 조준 중 밝은 노랑, 파워 차면 주황→빨강
+      if (!aimLocked || powerRatio < 0.05) {
+        aimLine.material.color.setHex(0xfff176);
+        aimLine.material.opacity = 1;
+      } else if (powerRatio < 0.5) {
+        aimLine.material.color.setRGB(1, 0.85 - powerRatio * 0.3, 0.2);
+        aimLine.material.opacity = 1;
+      } else {
+        aimLine.material.color.setRGB(1, 0.35, 0.15);
+        aimLine.material.opacity = 1;
+      }
       aimLine.visible = shotPhase === 'aim';
 
-      // 파워에 비례해 큐를 뒤로 당김 (기본 근접 → 풀스윙)
-      // stick 길이 1.2, 중심 기준이므로 tip까지 약 0.6
-      const tipGap = 0.04; // 당점까지 최소 간격
-      const basePull = 0.58 + tipGap; // 파워 0일 때 큐 중심~공
+      // 바닥 가이드선 (더 선명)
+      if (aimGround) {
+        const g0 = new THREE.Vector3(cuePos.x, 0.005, cuePos.z);
+        const g1 = g0.clone().add(dir.clone().multiplyScalar(len));
+        aimGround.geometry.setFromPoints([g0, g1]);
+        aimGround.geometry.attributes.position.needsUpdate = true;
+        aimGround.material.color.setHex(aimLocked ? 0xf97316 : 0x22d3ee);
+        aimGround.visible = shotPhase === 'aim';
+      }
+
+      // 타겟 링 — 조준 끝
+      if (aimTarget) {
+        aimTarget.position.set(end.x, 0.006, end.z);
+        aimTarget.visible = shotPhase === 'aim';
+      }
+
+      // 파워에 비례해 큐를 뒤로 당김
+      const tipGap = 0.04;
+      const basePull = 0.58 + tipGap;
       const extraPull = (0.15 + powerRatio * 0.72) * playerSettings.cuePull;
       const powerPull = basePull + extraPull;
-      const back = aimDir.clone().normalize().multiplyScalar(-powerPull);
-      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), aimDir).normalize();
-      // 오른손잡이: 살짝 오른쪽·위
+      const back = dir.clone().multiplyScalar(-powerPull);
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
       const handLift = 0.018 + Math.abs(tipOffset.y) * 0.012;
       cueStick.position.set(
         cuePos.x + back.x + right.x * 0.045,
         cuePos.y + handLift,
         cuePos.z + back.z + right.z * 0.045
       );
-      // 큐 끝이 당점을 향하도록
       if (shotPhase === 'aim') updateTipMarker(cuePos);
       const tipWorld = tipMarker && tipMarker.visible ? tipMarker.position.clone() : cuePos.clone();
       const stickDir = new THREE.Vector3().subVectors(tipWorld, cueStick.position).normalize();
       if (stickDir.lengthSq() > 0.01) {
         cueStick.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), stickDir);
       } else {
-        cueStick.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), aimDir.clone().normalize());
+        cueStick.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
       }
       cueStick.visible = shotPhase === 'aim';
     }
 
     function hideAimVisuals() {
       if (aimLine) aimLine.visible = false;
+      if (aimGround) aimGround.visible = false;
+      if (aimTarget) aimTarget.visible = false;
       if (cueStick) cueStick.visible = false;
       if (tipMarker) tipMarker.visible = false;
       if (tipGuide) tipGuide.visible = false;
@@ -1151,15 +1220,27 @@
     }
 
     function setShotCamera(cuePos) {
-      // 오른손잡이 시점 — 조준 중에는 고정(매 프레임 갱신하지 않음)
-      const back = aimDir.clone().normalize().multiplyScalar(-1.35);
-      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), aimDir).normalize();
+      // 실제처럼 큐 라인에 몸을 숙여 타겟을 보는 시점
+      const dir = aimDir.clone().normalize();
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
+      const dist = playerSettings.camDist;
+      const height = playerSettings.camHeight;
+      const side = playerSettings.camSide;
+      // 공 뒤쪽 + 살짝 옆 (오른손) + 낮은 눈높이
       camera.position.set(
-        cuePos.x + back.x + right.x * 0.18,
-        cuePos.y + 0.38,
-        cuePos.z + back.z + right.z * 0.18
+        cuePos.x - dir.x * dist + right.x * side,
+        Math.max(0.08, cuePos.y + height),
+        cuePos.z - dir.z * dist + right.z * side
       );
-      controls.target.set(cuePos.x + aimDir.x * 0.2, cuePos.y, cuePos.z + aimDir.z * 0.2);
+      // 시선은 조준 방향으로 멀리 — 타겟이 화면 중앙에 오도록
+      const lookDist = 1.6;
+      controls.target.set(
+        cuePos.x + dir.x * lookDist,
+        cuePos.y * 0.4,
+        cuePos.z + dir.z * lookDist
+      );
+      camera.near = 0.02;
+      camera.updateProjectionMatrix();
       controls.update();
     }
 
@@ -1272,14 +1353,15 @@
       }
 
       if (!aimLocked) {
-        // 조준만 (파워 0 유지) — 감도 낮음
+        // 조준만 — 카메라가 큐 라인을 따라 같이 회전 (눈으로 각도 확인)
         aimYaw = aimDragOrigin.yaw - dx * AIM_TURN_SENS;
         syncAimDirFromYaw();
+        setShotCamera(cuePos);
         currentPower = 0;
         powerBar.style.width = '0%';
         document.getElementById('power-label').textContent = 'POWER 0% · 조준 중';
       } else if (isCharging) {
-        // 파워만 — 조준 각도 변경 없음
+        // 파워만 — 조준·카메라 고정
         const pull = Math.max(0, dy - 12);
         const sens = Math.max(55, playerSettings.dragSens * 1.2);
         currentPower = Math.min(getMaxPower(), pull / sens);
@@ -2219,13 +2301,27 @@
       const ps = document.getElementById('set-power-scale');
       const ds = document.getElementById('set-drag-sens');
       const cp = document.getElementById('set-cue-pull');
+      const cd = document.getElementById('set-cam-dist');
+      const ch = document.getElementById('set-cam-height');
       if (!ps) return;
       ps.value = Math.round(playerSettings.powerScale * 100);
       ds.value = playerSettings.dragSens;
       cp.value = Math.round(playerSettings.cuePull * 100);
+      if (cd) cd.value = Math.round(playerSettings.camDist * 100);
+      if (ch) ch.value = Math.round(playerSettings.camHeight * 100);
       document.getElementById('set-power-val').textContent = ps.value + '%';
       document.getElementById('set-sens-val').textContent = sensLabel(+ds.value);
       document.getElementById('set-pull-val').textContent = cp.value + '%';
+      if (cd) {
+        const v = +cd.value;
+        document.getElementById('set-camdist-val').textContent =
+          v <= 40 ? '매우 가깝게' : v <= 60 ? '가깝게' : v <= 80 ? '보통' : '멀리';
+      }
+      if (ch) {
+        const v = +ch.value;
+        document.getElementById('set-camh-val').textContent =
+          v <= 12 ? '낮음' : v <= 22 ? '보통' : '높음';
+      }
     }
     function bindSettingsUI() {
       const panel = document.getElementById('settings-panel');
@@ -2246,6 +2342,9 @@
         playerSettings.powerScale = 1;
         playerSettings.dragSens = 90;
         playerSettings.cuePull = 1;
+        playerSettings.camDist = 0.55;
+        playerSettings.camHeight = 0.14;
+        playerSettings.camSide = 0.04;
         savePlayerSettings();
         refreshSettingsUI();
       });
@@ -2262,6 +2361,16 @@
       document.getElementById('set-cue-pull').addEventListener('input', (e) => {
         playerSettings.cuePull = (+e.target.value) / 100;
         document.getElementById('set-pull-val').textContent = e.target.value + '%';
+        savePlayerSettings();
+      });
+      document.getElementById('set-cam-dist').addEventListener('input', (e) => {
+        playerSettings.camDist = (+e.target.value) / 100;
+        refreshSettingsUI();
+        savePlayerSettings();
+      });
+      document.getElementById('set-cam-height').addEventListener('input', (e) => {
+        playerSettings.camHeight = (+e.target.value) / 100;
+        refreshSettingsUI();
         savePlayerSettings();
       });
     }
