@@ -596,8 +596,9 @@
     let tipOffset = { x: 0, y: 0 };
     let savedCam = null;       // 샷 카메라 복귀용
     let aimYaw = 0;            // 조준 각도 (XZ 평면, rad)
-    let aimDragOrigin = null;  // 조준 드래그 시작 시 포인터/각도
-    const AIM_TURN_SENS = 0.00056; // 이전 느린 감도의 약 2배
+    let aimDragOrigin = null;  // 파워 드래그 시작점
+    let aimMoveLastX = null;   // 좌우 조준용 마지막 마우스 X
+    const AIM_TURN_SENS = 0.00056;
     let aimLocked = false;         // 파워 충전 중 조준 고정
     let aimTarget = null;          // 조준 끝 타겟 마커
     let aimGround = null;          // 테이블 위 조준 가이드선
@@ -1153,6 +1154,7 @@
       aimLocked = false;
       chargeStart = null;
       aimDragOrigin = null;
+      aimMoveLastX = null;
       tipOffset = { x: 0, y: 0 };
       controls.enabled = true;
       hideTipOverlay();
@@ -1204,6 +1206,7 @@
       aimLocked = false;
       currentPower = 0;
       aimDragOrigin = null;
+      aimMoveLastX = null;
       hideTipOverlay();
       const cue = getCueBall();
       if (!cue) return;
@@ -1217,7 +1220,7 @@
       updateTipMarker(cuePos);
       updateAimVisuals(cuePos);
       if (tipGuide) tipGuide.visible = false;
-      statusEl.textContent = '② 좌우로 조준 → 아래로 당겨 파워(조준 고정) → 손 떼면 발사';
+      statusEl.textContent = '② 마우스 좌우로 방향 · ③ 클릭 후 드래그로 파워 · 손 떼면 발사';
     }
 
     function setShotCamera(cuePos) {
@@ -1304,18 +1307,21 @@
         return;
       }
 
-      // --- 조준/파워 단계: 드래그 시작 ---
+      // --- ③ 클릭 후 드래그 = 파워 (방향은 ②에서 설정, 터치 시 첫 구간은 좌우 조준 가능) ---
       if (shotPhase === 'aim') {
         isAiming = true;
         isCharging = true;
-        aimLocked = false;
+        aimLocked = false; // 짧게 좌우 조정 허용 후 당기면 고정
         chargeStart = { x: e.clientX, y: e.clientY };
         aimDragOrigin = { x: e.clientX, y: e.clientY, yaw: aimYaw };
+        aimMoveLastX = e.clientX;
         controls.enabled = false;
         try { renderer.domElement.setPointerCapture(e.pointerId); } catch (_) {}
         powerWrap.style.display = 'block';
+        currentPower = 0;
+        powerBar.style.width = '0%';
         document.getElementById('power-label').textContent = 'POWER 0%';
-        statusEl.textContent = '좌우=조준 · 아무 방향으로 당기면 파워';
+        statusEl.textContent = '③ 드래그로 파워 · 손 떼면 발사';
         return;
       }
 
@@ -1327,7 +1333,6 @@
       if (dist <= playR) {
         enterTipPhase();
       }
-      // else: OrbitControls가 카메라 회전 처리
     }
 
     function onPointerMove(e) {
@@ -1339,40 +1344,55 @@
         return;
       }
 
-      if (shotPhase !== 'aim' || !isAiming || !aimDragOrigin) return;
+      if (shotPhase !== 'aim') return;
       const cue = getCueBall();
       if (!cue) return;
       const cuePos = new THREE.Vector3().copy(cue.body.translation());
 
+      // ② 버튼 안 누른 상태: 마우스 좌우 이동 = 방향만
+      if (!isCharging) {
+        if (aimMoveLastX == null) {
+          aimMoveLastX = e.clientX;
+        } else {
+          const dx = e.clientX - aimMoveLastX;
+          aimMoveLastX = e.clientX;
+          if (Math.abs(dx) > 0) {
+            aimYaw -= dx * AIM_TURN_SENS;
+            syncAimDirFromYaw();
+            setShotCamera(cuePos);
+            updateAimVisuals(cuePos);
+          }
+        }
+        return;
+      }
+
+      // ③ 누르고 드래그: 처음엔 좌우 조준, 충분히 당기면 파워+방향고정
+      if (!aimDragOrigin) return;
       const dx = e.clientX - aimDragOrigin.x;
       const dy = e.clientY - aimDragOrigin.y;
       const dragDist = Math.hypot(dx, dy);
 
-      // 당김 거리 충분하면 파워 모드 (아래/위/대각 모두 인식)
-      if (!aimLocked && dragDist > 28) {
-        aimLocked = true;
-        aimDragOrigin.yaw = aimYaw;
-      }
-
       if (!aimLocked) {
-        // 짧은 좌우 이동 = 조준 (카메라 따라감)
+        // 좌우 미세 조정
         aimYaw = aimDragOrigin.yaw - dx * AIM_TURN_SENS;
         syncAimDirFromYaw();
         setShotCamera(cuePos);
+        if (dragDist > 30) {
+          aimLocked = true;
+          aimDragOrigin.yaw = aimYaw;
+        }
         currentPower = 0;
         powerBar.style.width = '0%';
-        document.getElementById('power-label').textContent = 'POWER 0% · 조준 중';
-      } else if (isCharging) {
-        // 파워: 시작점부터 드래그한 총 거리 (방향 무관)
+        document.getElementById('power-label').textContent = 'POWER 0% · 방향 조정';
+      } else {
         const pull = Math.max(0, dragDist - 20);
         const sens = Math.max(45, playerSettings.dragSens);
         currentPower = Math.min(getMaxPower(), pull / sens);
         const maxP = getMaxPower();
         powerBar.style.width = (maxP > 0 ? (currentPower / maxP) * 100 : 0) + '%';
         const pct = Math.round((maxP > 0 ? currentPower / maxP : 0) * 100);
-        document.getElementById('power-label').textContent = `POWER ${pct}% · 조준 고정`;
+        document.getElementById('power-label').textContent = `POWER ${pct}%`;
       }
-
       updateAimVisuals(cuePos);
     }
 
@@ -1411,6 +1431,7 @@
         aimLocked = false;
         chargeStart = null;
         aimDragOrigin = null;
+        aimMoveLastX = null;
         hideAimVisuals();
         controls.enabled = true;
         if (savedCam) {
@@ -1420,16 +1441,17 @@
           savedCam = null;
         }
       } else {
-        // 파워 부족 → 조준 유지
+        // 파워 부족 → 다시 좌우 조준 가능
         isAiming = false;
         isCharging = false;
         aimLocked = false;
         chargeStart = null;
         aimDragOrigin = null;
+        aimMoveLastX = null;
         powerWrap.style.display = 'none';
         currentPower = 0;
         powerBar.style.width = '0%';
-        statusEl.textContent = '② 다시 눌러 좌우 조준 · 아래로 당겨 파워';
+        statusEl.textContent = '② 마우스 좌우로 방향 · ③ 클릭 드래그로 파워';
       }
     }
 
