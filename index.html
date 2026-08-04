@@ -341,6 +341,34 @@
       background: #1e293b; color: #e2e8f0; cursor: pointer; font-size: 0.78rem;
     }
     #settings-panel .set-actions button.primary { background: #0ea5e9; border-color: #0284c7; color: #fff; }
+    /* 당점 2D 오버레이 — 마우스/터치와 1:1 */
+    #tip-overlay {
+      display: none; position: absolute; z-index: 14; pointer-events: auto;
+      width: 140px; height: 140px; margin-left: -70px; margin-top: -70px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.2), rgba(0,0,0,0.35));
+      border: 2px dashed rgba(125, 211, 252, 0.85);
+      box-shadow: 0 0 0 4px rgba(0,0,0,0.25), inset 0 0 20px rgba(0,0,0,0.2);
+      touch-action: none; cursor: crosshair;
+    }
+    #tip-overlay.show { display: block; }
+    #tip-overlay .tip-cross-h, #tip-overlay .tip-cross-v {
+      position: absolute; background: rgba(253, 224, 71, 0.7); pointer-events: none;
+    }
+    #tip-overlay .tip-cross-h { left: 10%; right: 10%; top: 50%; height: 1px; margin-top: -0.5px; }
+    #tip-overlay .tip-cross-v { top: 10%; bottom: 10%; left: 50%; width: 1px; margin-left: -0.5px; }
+    #tip-overlay .tip-dot {
+      position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px;
+      border-radius: 50%; background: #ef4444;
+      border: 2px solid #fff; box-shadow: 0 0 8px rgba(239,68,68,0.8);
+      left: 50%; top: 50%; pointer-events: none;
+    }
+    #tip-overlay .tip-hint {
+      position: absolute; left: 50%; bottom: -28px; transform: translateX(-50%);
+      white-space: nowrap; font-size: 0.72rem; color: #e2e8f0;
+      background: rgba(0,0,0,0.7); padding: 3px 8px; border-radius: 6px;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -437,6 +465,12 @@
   <div id="power-wrap">
     <div id="power-label">POWER</div>
     <div id="power-bar-bg"><div id="power-bar"></div></div>
+  </div>
+  <div id="tip-overlay" aria-hidden="true">
+    <div class="tip-cross-h"></div>
+    <div class="tip-cross-v"></div>
+    <div class="tip-dot" id="tip-dot"></div>
+    <div class="tip-hint">당점 터치 · 중앙=무회전</div>
   </div>
   <button type="button" id="btn-settings" title="개인 설정">⚙ 설정</button>
   <div id="settings-panel" aria-hidden="true">
@@ -546,7 +580,10 @@
     let savedCam = null;       // 샷 카메라 복귀용
     let aimYaw = 0;            // 조준 각도 (XZ 평면, rad)
     let aimDragOrigin = null;  // 조준 드래그 시작 시 포인터/각도
-    const AIM_TURN_SENS = 0.00066; // 픽셀당 회전(rad) — 기존 대비 ~30%
+    const AIM_TURN_SENS = 0.00028; // 픽셀당 회전(rad) — 더 낮춤
+    let aimLocked = false;         // 파워 충전 중 조준 고정
+    const tipOverlay = document.getElementById('tip-overlay');
+    const tipDotEl = document.getElementById('tip-dot');
     let SCORE_TARGET = 10;
     let scores = { 1: 0, 2: 0 };
     let needConfirm = { 1: false, 2: false }; // 마지막 알 이후 확인 득점 필요
@@ -644,7 +681,22 @@
       canvas.addEventListener('pointerup', onPointerUp);
       canvas.addEventListener('pointerleave', onPointerUp);
 
-      statusEl.textContent = '준비 완료 · 큐볼 근처 클릭 후 드래그하여 샷';
+      // 당점 2D 오버레이 — 터치/클릭 1:1
+      tipOverlay.addEventListener('pointerdown', (e) => {
+        if (shotPhase !== 'tip') return;
+        e.preventDefault();
+        e.stopPropagation();
+        tipOffset = tipOffsetFromOverlayEvent(e);
+        setTipDotFromOffset(tipOffset.x, tipOffset.y);
+        enterAimPhase();
+      });
+      tipOverlay.addEventListener('pointermove', (e) => {
+        if (shotPhase !== 'tip') return;
+        tipOffset = tipOffsetFromOverlayEvent(e);
+        setTipDotFromOffset(tipOffset.x, tipOffset.y);
+      });
+
+      statusEl.textContent = '준비 완료 · 점선 원 안 클릭으로 샷';
       updateScoreUI();
       animate();
     }
@@ -889,27 +941,19 @@
       playRing.visible = true;
     }
 
-    // 카메라가 보는 공 앞면 기준 벡터
-    function tipFaceBasis(cuePos) {
-      const faceDir = new THREE.Vector3().subVectors(camera.position, cuePos).normalize();
-      const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
-      const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
-      return { faceDir, right, up };
-    }
-
     function updateTipMarker(cuePos) {
       if (!tipMarker) return;
+      // 조준 단계에서만 3D 마커 (큐가 맞는 면)
+      if (shotPhase !== 'aim') {
+        tipMarker.visible = false;
+        return;
+      }
       const ox = tipOffset.x * BALL_R * 0.9;
       const oy = tipOffset.y * BALL_R * 0.9;
-      let faceDir, right, up;
-      if (shotPhase === 'tip') {
-        ({ faceDir, right, up } = tipFaceBasis(cuePos));
-      } else {
-        faceDir = aimDir.clone().normalize().multiplyScalar(-1);
-        right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), faceDir).normalize();
-        if (right.lengthSq() < 0.01) right.set(1, 0, 0);
-        up = new THREE.Vector3().crossVectors(faceDir, right).normalize();
-      }
+      const faceDir = aimDir.clone().normalize().multiplyScalar(-1);
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), faceDir).normalize();
+      if (right.lengthSq() < 0.01) right.set(1, 0, 0);
+      const up = new THREE.Vector3().crossVectors(faceDir, right).normalize();
       tipMarker.position.set(
         cuePos.x + faceDir.x * BALL_R + right.x * ox + up.x * oy,
         cuePos.y + faceDir.y * BALL_R + right.y * ox + up.y * oy,
@@ -918,26 +962,48 @@
       tipMarker.visible = true;
     }
 
-    // 마우스 레이 ∩ 공 앞면 평면 → 당점 (커서와 마커 일치)
-    function tipOffsetFromPointer(e, cuePos) {
-      getMouseNdc(e);
-      raycaster.setFromCamera(mouse, camera);
-      const { faceDir, right, up } = tipFaceBasis(cuePos);
-      // 공 중심에서 카메라 쪽으로 살짝 앞 평면
-      const planePoint = cuePos.clone().add(faceDir.clone().multiplyScalar(BALL_R * 0.15));
-      const tipPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(faceDir, planePoint);
-      const hit = new THREE.Vector3();
-      if (!raycaster.ray.intersectPlane(tipPlane, hit)) {
-        return { x: 0, y: 0 };
-      }
-      const rel = hit.clone().sub(cuePos);
-      let tx = rel.dot(right) / BALL_R;
-      let ty = rel.dot(up) / BALL_R;
+    function positionTipOverlay(cuePos) {
+      if (!tipOverlay) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      const v = cuePos.clone().project(camera);
+      const x = (v.x * 0.5 + 0.5) * rect.width + rect.left;
+      const y = (-v.y * 0.5 + 0.5) * rect.height + rect.top;
+      tipOverlay.style.left = x + 'px';
+      tipOverlay.style.top = y + 'px';
+    }
+
+    function showTipOverlay(cuePos) {
+      positionTipOverlay(cuePos);
+      tipOverlay.classList.add('show');
+      tipOverlay.setAttribute('aria-hidden', 'false');
+      setTipDotFromOffset(0, 0);
+    }
+
+    function hideTipOverlay() {
+      tipOverlay.classList.remove('show');
+      tipOverlay.setAttribute('aria-hidden', 'true');
+    }
+
+    function setTipDotFromOffset(tx, ty) {
+      // 오버레이 원 안에서 점 위치 (50% ± 45%)
+      const px = 50 + tx * 45;
+      const py = 50 - ty * 45; // ty+ = 상단 = 화면 위
+      tipDotEl.style.left = px + '%';
+      tipDotEl.style.top = py + '%';
+    }
+
+    // 2D 오버레이 기준 당점 (터치/마우스와 1:1)
+    function tipOffsetFromOverlayEvent(e) {
+      const rect = tipOverlay.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const clientX = e.clientX ?? (e.touches && e.touches[0]?.clientX);
+      const clientY = e.clientY ?? (e.touches && e.touches[0]?.clientY);
+      if (clientX == null) return { x: 0, y: 0 };
+      let tx = (clientX - cx) / (rect.width / 2);
+      let ty = -(clientY - cy) / (rect.height / 2);
       const len = Math.hypot(tx, ty);
-      if (len > 0.95) {
-        tx *= 0.95 / len;
-        ty *= 0.95 / len;
-      }
+      if (len > 0.95) { tx *= 0.95 / len; ty *= 0.95 / len; }
       return { x: tx, y: ty };
     }
 
@@ -1014,10 +1080,12 @@
       shotPhase = 'idle';
       isAiming = false;
       isCharging = false;
+      aimLocked = false;
       chargeStart = null;
       aimDragOrigin = null;
       tipOffset = { x: 0, y: 0 };
       controls.enabled = true;
+      hideTipOverlay();
       hideAimVisuals();
       if (savedCam) {
         camera.position.copy(savedCam.pos);
@@ -1049,26 +1117,27 @@
       if (!cue) return;
       const cuePos = new THREE.Vector3().copy(cue.body.translation());
       savedCam = { pos: camera.position.clone(), target: controls.target.clone() };
-      // 공 포커스
       const camPos = cuePos.clone().add(new THREE.Vector3(0.35, 0.28, 0.45));
       camera.position.copy(camPos);
       controls.target.copy(cuePos);
       controls.update();
-      updateTipGuide(cuePos);
+      if (tipGuide) tipGuide.visible = false;
       if (playRing) playRing.visible = false;
-      statusEl.textContent = '① 당점 선택: 공 위(상단=밀기 · 하단=끌기 · 좌우=사이드)';
+      showTipOverlay(cuePos);
+      statusEl.textContent = '① 원 안을 터치해 당점 선택 (상=밀기 · 하=끌기 · 좌우=사이드)';
     }
 
     function enterAimPhase() {
       shotPhase = 'aim';
       isAiming = false;
       isCharging = false;
+      aimLocked = false;
       currentPower = 0;
       aimDragOrigin = null;
+      hideTipOverlay();
       const cue = getCueBall();
       if (!cue) return;
       const cuePos = new THREE.Vector3().copy(cue.body.translation());
-      // 초기 조준: 테이블 중심 쪽
       const toCenter = new THREE.Vector3(-cuePos.x, 0, -cuePos.z);
       if (toCenter.length() < 0.05) toCenter.set(1, 0, 0);
       toCenter.normalize();
@@ -1078,7 +1147,7 @@
       updateTipMarker(cuePos);
       updateAimVisuals(cuePos);
       if (tipGuide) tipGuide.visible = false;
-      statusEl.textContent = '② 좌우로 천천히 조준 · 뒤로 당겨 파워 · 손 떼면 발사';
+      statusEl.textContent = '② 좌우로 조준 → 아래로 당겨 파워(조준 고정) → 손 떼면 발사';
     }
 
     function setShotCamera(cuePos) {
@@ -1145,10 +1214,10 @@
       if (!cue) return;
       const cuePos = new THREE.Vector3().copy(cue.body.translation());
 
-      // --- 당점 선택 단계 ---
+      // --- 당점 선택 단계 (캔버스 클릭 시에도 오버레이 기준) ---
       if (shotPhase === 'tip') {
-        tipOffset = tipOffsetFromPointer(e, cuePos);
-        updateTipMarker(cuePos);
+        tipOffset = tipOffsetFromOverlayEvent(e);
+        setTipDotFromOffset(tipOffset.x, tipOffset.y);
         enterAimPhase();
         return;
       }
@@ -1157,12 +1226,13 @@
       if (shotPhase === 'aim') {
         isAiming = true;
         isCharging = true;
+        aimLocked = false;
         chargeStart = { x: e.clientX, y: e.clientY };
         aimDragOrigin = { x: e.clientX, y: e.clientY, yaw: aimYaw };
         controls.enabled = false;
         powerWrap.style.display = 'block';
         document.getElementById('power-label').textContent = 'POWER 0%';
-        statusEl.textContent = '좌우=조준 · 아래/뒤로 당김=파워 · 손 떼면 발사';
+        statusEl.textContent = '좌우 조준 · 아래 당기면 파워(조준 고정)';
         return;
       }
 
@@ -1180,11 +1250,9 @@
     function onPointerMove(e) {
       if (shotPhase === 'tip') {
         const cue = getCueBall();
-        if (!cue) return;
-        const cuePos = new THREE.Vector3().copy(cue.body.translation());
-        updateTipGuide(cuePos);
-        tipOffset = tipOffsetFromPointer(e, cuePos);
-        updateTipMarker(cuePos);
+        if (cue) positionTipOverlay(new THREE.Vector3().copy(cue.body.translation()));
+        tipOffset = tipOffsetFromOverlayEvent(e);
+        setTipDotFromOffset(tipOffset.x, tipOffset.y);
         return;
       }
 
@@ -1193,23 +1261,33 @@
       if (!cue) return;
       const cuePos = new THREE.Vector3().copy(cue.body.translation());
 
-      // 좌우 드래그 → 조준 각 (감도 낮춤, 카메라 고정)
       const dx = e.clientX - aimDragOrigin.x;
       const dy = e.clientY - aimDragOrigin.y;
-      aimYaw = aimDragOrigin.yaw - dx * AIM_TURN_SENS;
-      syncAimDirFromYaw();
 
-      // 뒤로/아래로 당긴 거리 → 파워 (수평 성분은 약하게만 반영)
-      if (isCharging && chargeStart) {
-        const pull = Math.max(0, dy) * 0.85 + Math.abs(dx) * 0.15;
-        const sens = Math.max(50, playerSettings.dragSens * 1.15);
+      // 아래로 당기기 시작하면 조준 고정 + 파워만
+      if (!aimLocked && dy > 24) {
+        aimLocked = true;
+        // 고정 시점의 각도 유지
+        aimDragOrigin.yaw = aimYaw;
+      }
+
+      if (!aimLocked) {
+        // 조준만 (파워 0 유지) — 감도 낮음
+        aimYaw = aimDragOrigin.yaw - dx * AIM_TURN_SENS;
+        syncAimDirFromYaw();
+        currentPower = 0;
+        powerBar.style.width = '0%';
+        document.getElementById('power-label').textContent = 'POWER 0% · 조준 중';
+      } else if (isCharging) {
+        // 파워만 — 조준 각도 변경 없음
+        const pull = Math.max(0, dy - 12);
+        const sens = Math.max(55, playerSettings.dragSens * 1.2);
         currentPower = Math.min(getMaxPower(), pull / sens);
         powerBar.style.width = (currentPower / getMaxPower() * 100) + '%';
         const pct = Math.round((currentPower / getMaxPower()) * 100);
-        document.getElementById('power-label').textContent = `POWER ${pct}%`;
+        document.getElementById('power-label').textContent = `POWER ${pct}% · 조준 고정`;
       }
 
-      // 카메라는 고정 — 큐/조준선만 갱신
       updateAimVisuals(cuePos);
     }
 
@@ -1245,6 +1323,7 @@
         shotPhase = 'idle';
         isAiming = false;
         isCharging = false;
+        aimLocked = false;
         chargeStart = null;
         aimDragOrigin = null;
         hideAimVisuals();
@@ -1259,6 +1338,7 @@
         // 파워 부족 → 조준 유지
         isAiming = false;
         isCharging = false;
+        aimLocked = false;
         chargeStart = null;
         aimDragOrigin = null;
         powerWrap.style.display = 'none';
