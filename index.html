@@ -599,9 +599,11 @@
     let aimDragOrigin = null;  // 파워 드래그 시작점
     let aimMoveLastX = null;   // 좌우 조준용 마지막 마우스 X
     const AIM_TURN_SENS = 0.00056;
+    const AIM_EDGE_SPEED = 0.035;  // 화면 가장자리 자동 회전 (rad/frame 상당)
     let aimLocked = false;         // 파워 충전 중 조준 고정
     let aimTarget = null;          // 조준 끝 타겟 마커
     let aimGround = null;          // 테이블 위 조준 가이드선
+    let postShotTopView = false;   // 샷 직후 탑뷰 고정 여부
     const tipOverlay = document.getElementById('tip-overlay');
     const tipDotEl = document.getElementById('tip-dot');
     let SCORE_TARGET = 10;
@@ -699,7 +701,14 @@
       canvas.addEventListener('pointerdown', onPointerDown);
       canvas.addEventListener('pointermove', onPointerMove);
       canvas.addEventListener('pointerup', onPointerUp);
-      canvas.addEventListener('pointerleave', onPointerUp);
+      canvas.addEventListener('pointerleave', (e) => {
+        // 창 밖 이탈 시 좌표 점프 방지 (파워 충전 중이면 발사 처리)
+        aimMoveLastX = null;
+        if (isCharging) onPointerUp(e);
+      });
+      document.addEventListener('pointerlockchange', () => {
+        if (!document.pointerLockElement) aimMoveLastX = null;
+      });
 
       // 당점 2D 오버레이 — 터치/클릭 1:1
       tipOverlay.addEventListener('pointerdown', (e) => {
@@ -1156,15 +1165,12 @@
       aimDragOrigin = null;
       aimMoveLastX = null;
       tipOffset = { x: 0, y: 0 };
+      releaseAimPointerLock();
       controls.enabled = true;
       hideTipOverlay();
       hideAimVisuals();
-      if (savedCam) {
-        camera.position.copy(savedCam.pos);
-        controls.target.copy(savedCam.target);
-        controls.update();
-        savedCam = null;
-      }
+      // ESC 취소 시에는 탑뷰로 (어색한 조준 시점 유지 방지)
+      setTopView();
     }
 
     // 당점 → 토크 (상=전진회전, 하=당김, 좌우=사이드)
@@ -1207,6 +1213,7 @@
       currentPower = 0;
       aimDragOrigin = null;
       aimMoveLastX = null;
+      postShotTopView = false;
       hideTipOverlay();
       const cue = getCueBall();
       if (!cue) return;
@@ -1220,7 +1227,9 @@
       updateTipMarker(cuePos);
       updateAimVisuals(cuePos);
       if (tipGuide) tipGuide.visible = false;
-      statusEl.textContent = '② 마우스 좌우로 방향 · ③ 클릭 후 드래그로 파워 · 손 떼면 발사';
+      // 포인터 락 → 화면 끝까지 가도 360° 연속 회전
+      setTimeout(() => requestAimPointerLock(), 50);
+      statusEl.textContent = '② 마우스 좌우로 360° 조준 · ③ 클릭 드래그로 파워 · 손 떼면 발사';
     }
 
     function setShotCamera(cuePos) {
@@ -1230,13 +1239,11 @@
       const dist = playerSettings.camDist;
       const height = playerSettings.camHeight;
       const side = playerSettings.camSide;
-      // 공 뒤쪽 + 살짝 옆 (오른손) + 낮은 눈높이
       camera.position.set(
         cuePos.x - dir.x * dist + right.x * side,
         Math.max(0.08, cuePos.y + height),
         cuePos.z - dir.z * dist + right.z * side
       );
-      // 시선은 조준 방향으로 멀리 — 타겟이 화면 중앙에 오도록
       const lookDist = 1.6;
       controls.target.set(
         cuePos.x + dir.x * lookDist,
@@ -1246,6 +1253,29 @@
       camera.near = 0.02;
       camera.updateProjectionMatrix();
       controls.update();
+    }
+
+    // 샷 직후 탑뷰 (이후 드래그로 자유 시점)
+    function setTopView() {
+      postShotTopView = true;
+      camera.position.set(0, 2.85, 0.05);
+      controls.target.set(0, 0.02, 0);
+      controls.enabled = true;
+      controls.update();
+      savedCam = null;
+    }
+
+    function releaseAimPointerLock() {
+      try {
+        if (document.pointerLockElement) document.exitPointerLock();
+      } catch (_) {}
+    }
+
+    function requestAimPointerLock() {
+      try {
+        const el = renderer && renderer.domElement;
+        if (el && el.requestPointerLock) el.requestPointerLock();
+      } catch (_) {}
     }
 
     // ========== Input ==========
@@ -1307,13 +1337,13 @@
         return;
       }
 
-      // --- ③ 클릭 후 드래그 = 파워 (방향은 ②에서 설정, 터치 시 첫 구간은 좌우 조준 가능) ---
+      // --- ③ 클릭 후 드래그 = 파워 ---
       if (shotPhase === 'aim') {
         isAiming = true;
         isCharging = true;
-        aimLocked = false; // 짧게 좌우 조정 허용 후 당기면 고정
+        aimLocked = false;
         chargeStart = { x: e.clientX, y: e.clientY };
-        aimDragOrigin = { x: e.clientX, y: e.clientY, yaw: aimYaw };
+        aimDragOrigin = { x: e.clientX, y: e.clientY, yaw: aimYaw, pullAcc: 0 };
         aimMoveLastX = e.clientX;
         controls.enabled = false;
         try { renderer.domElement.setPointerCapture(e.pointerId); } catch (_) {}
@@ -1349,38 +1379,59 @@
       if (!cue) return;
       const cuePos = new THREE.Vector3().copy(cue.body.translation());
 
-      // ② 버튼 안 누른 상태: 마우스 좌우 이동 = 방향만
+      // ② 버튼 안 누른 상태: 좌우 이동 = 360° 조준
       if (!isCharging) {
-        if (aimMoveLastX == null) {
-          aimMoveLastX = e.clientX;
+        let dx = 0;
+        if (document.pointerLockElement === renderer.domElement) {
+          // 포인터 락: 화면 밖 제한 없이 movementX로 연속 회전
+          dx = e.movementX || 0;
         } else {
-          const dx = e.clientX - aimMoveLastX;
-          aimMoveLastX = e.clientX;
-          if (Math.abs(dx) > 0) {
-            aimYaw -= dx * AIM_TURN_SENS;
-            syncAimDirFromYaw();
-            setShotCamera(cuePos);
-            updateAimVisuals(cuePos);
+          if (aimMoveLastX == null) {
+            aimMoveLastX = e.clientX;
+            return;
           }
+          dx = e.clientX - aimMoveLastX;
+          aimMoveLastX = e.clientX;
+          // 창 밖 나갔다 들어오면 점프 무시
+          if (Math.abs(dx) > 80) return;
+        }
+        if (dx !== 0) {
+          aimYaw -= dx * AIM_TURN_SENS;
+          // 무제한 누적 (sin/cos로 360° 전 방향)
+          syncAimDirFromYaw();
+          setShotCamera(cuePos);
+          updateAimVisuals(cuePos);
         }
         return;
       }
 
-      // ③ 누르고 드래그: 처음엔 좌우 조준, 충분히 당기면 파워+방향고정
+      // ③ 파워 드래그
       if (!aimDragOrigin) return;
-      const dx = e.clientX - aimDragOrigin.x;
-      const dy = e.clientY - aimDragOrigin.y;
-      const dragDist = Math.hypot(dx, dy);
+      const locked = document.pointerLockElement === renderer.domElement;
+      const mdx = e.movementX || 0;
+      const mdy = e.movementY || 0;
+      const dx = locked ? mdx : (e.clientX - aimDragOrigin.x);
+      const dy = locked ? mdy : (e.clientY - aimDragOrigin.y);
+      // 포인터락 시 이동량 누적, 아니면 시작점 거리
+      if (locked) {
+        aimDragOrigin.pullAcc += Math.hypot(mdx, mdy);
+      }
+      const dragDist = locked
+        ? aimDragOrigin.pullAcc
+        : Math.hypot(e.clientX - aimDragOrigin.x, e.clientY - aimDragOrigin.y);
 
+      if (!aimLocked && dragDist > 30) {
+        aimLocked = true;
+      }
       if (!aimLocked) {
-        // 좌우 미세 조정
-        aimYaw = aimDragOrigin.yaw - dx * AIM_TURN_SENS;
+        if (locked) {
+          aimYaw -= mdx * AIM_TURN_SENS;
+          aimDragOrigin.yaw = aimYaw;
+        } else {
+          aimYaw = aimDragOrigin.yaw - (e.clientX - aimDragOrigin.x) * AIM_TURN_SENS;
+        }
         syncAimDirFromYaw();
         setShotCamera(cuePos);
-        if (dragDist > 30) {
-          aimLocked = true;
-          aimDragOrigin.yaw = aimYaw;
-        }
         currentPower = 0;
         powerBar.style.width = '0%';
         document.getElementById('power-label').textContent = 'POWER 0% · 방향 조정';
@@ -1424,7 +1475,7 @@
             tipOffset: { ...tipOffset }
           });
         }
-        // 샷 후 카메라 복귀
+        // 샷 직후 탑뷰 고정 — 이후 드래그로 시점 변경 가능
         shotPhase = 'idle';
         isAiming = false;
         isCharging = false;
@@ -1432,14 +1483,10 @@
         chargeStart = null;
         aimDragOrigin = null;
         aimMoveLastX = null;
+        releaseAimPointerLock();
         hideAimVisuals();
-        controls.enabled = true;
-        if (savedCam) {
-          camera.position.copy(savedCam.pos);
-          controls.target.copy(savedCam.target);
-          controls.update();
-          savedCam = null;
-        }
+        setTopView();
+        statusEl.textContent = '샷! 탑뷰 · 드래그로 시점 변경 가능';
       } else {
         // 파워 부족 → 다시 좌우 조준 가능
         isAiming = false;
@@ -1451,7 +1498,8 @@
         powerWrap.style.display = 'none';
         currentPower = 0;
         powerBar.style.width = '0%';
-        statusEl.textContent = '② 마우스 좌우로 방향 · ③ 클릭 드래그로 파워';
+        requestAimPointerLock();
+        statusEl.textContent = '② 마우스 좌우로 360° 조준 · ③ 클릭 드래그로 파워';
       }
     }
 
