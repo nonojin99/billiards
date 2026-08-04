@@ -544,6 +544,9 @@
     // 당점: x=좌(-)~우(+), y=하(-)~상(+)  / -1~1
     let tipOffset = { x: 0, y: 0 };
     let savedCam = null;       // 샷 카메라 복귀용
+    let aimYaw = 0;            // 조준 각도 (XZ 평면, rad)
+    let aimDragOrigin = null;  // 조준 드래그 시작 시 포인터/각도
+    const AIM_TURN_SENS = 0.00066; // 픽셀당 회전(rad) — 기존 대비 ~30%
     let SCORE_TARGET = 10;
     let scores = { 1: 0, 2: 0 };
     let needConfirm = { 1: false, 2: false }; // 마지막 알 이후 확인 득점 필요
@@ -886,20 +889,60 @@
       playRing.visible = true;
     }
 
+    // 카메라가 보는 공 앞면 기준 벡터
+    function tipFaceBasis(cuePos) {
+      const faceDir = new THREE.Vector3().subVectors(camera.position, cuePos).normalize();
+      const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+      const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+      return { faceDir, right, up };
+    }
+
     function updateTipMarker(cuePos) {
       if (!tipMarker) return;
-      // 당점을 공 표면(조준 반대쪽 = 큐가 맞는 면)에 표시
-      const back = aimDir.clone().normalize().multiplyScalar(-1);
-      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), back).normalize();
-      const up = new THREE.Vector3().crossVectors(back, right).normalize();
-      const ox = tipOffset.x * BALL_R * 0.85;
-      const oy = tipOffset.y * BALL_R * 0.85;
+      const ox = tipOffset.x * BALL_R * 0.9;
+      const oy = tipOffset.y * BALL_R * 0.9;
+      let faceDir, right, up;
+      if (shotPhase === 'tip') {
+        ({ faceDir, right, up } = tipFaceBasis(cuePos));
+      } else {
+        faceDir = aimDir.clone().normalize().multiplyScalar(-1);
+        right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), faceDir).normalize();
+        if (right.lengthSq() < 0.01) right.set(1, 0, 0);
+        up = new THREE.Vector3().crossVectors(faceDir, right).normalize();
+      }
       tipMarker.position.set(
-        cuePos.x + back.x * BALL_R + right.x * ox + up.x * oy,
-        cuePos.y + back.y * BALL_R + right.y * ox + up.y * oy,
-        cuePos.z + back.z * BALL_R + right.z * ox + up.z * oy
+        cuePos.x + faceDir.x * BALL_R + right.x * ox + up.x * oy,
+        cuePos.y + faceDir.y * BALL_R + right.y * ox + up.y * oy,
+        cuePos.z + faceDir.z * BALL_R + right.z * ox + up.z * oy
       );
       tipMarker.visible = true;
+    }
+
+    // 마우스 레이 ∩ 공 앞면 평면 → 당점 (커서와 마커 일치)
+    function tipOffsetFromPointer(e, cuePos) {
+      getMouseNdc(e);
+      raycaster.setFromCamera(mouse, camera);
+      const { faceDir, right, up } = tipFaceBasis(cuePos);
+      // 공 중심에서 카메라 쪽으로 살짝 앞 평면
+      const planePoint = cuePos.clone().add(faceDir.clone().multiplyScalar(BALL_R * 0.15));
+      const tipPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(faceDir, planePoint);
+      const hit = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(tipPlane, hit)) {
+        return { x: 0, y: 0 };
+      }
+      const rel = hit.clone().sub(cuePos);
+      let tx = rel.dot(right) / BALL_R;
+      let ty = rel.dot(up) / BALL_R;
+      const len = Math.hypot(tx, ty);
+      if (len > 0.95) {
+        tx *= 0.95 / len;
+        ty *= 0.95 / len;
+      }
+      return { x: tx, y: ty };
+    }
+
+    function syncAimDirFromYaw() {
+      aimDir.set(Math.sin(aimYaw), 0, Math.cos(aimYaw)).normalize();
     }
 
     function updateTipGuide(cuePos) {
@@ -972,6 +1015,7 @@
       isAiming = false;
       isCharging = false;
       chargeStart = null;
+      aimDragOrigin = null;
       tipOffset = { x: 0, y: 0 };
       controls.enabled = true;
       hideAimVisuals();
@@ -1017,33 +1061,36 @@
 
     function enterAimPhase() {
       shotPhase = 'aim';
-      isAiming = true;
+      isAiming = false;
       isCharging = false;
       currentPower = 0;
+      aimDragOrigin = null;
       const cue = getCueBall();
       if (!cue) return;
       const cuePos = new THREE.Vector3().copy(cue.body.translation());
       // 초기 조준: 테이블 중심 쪽
       const toCenter = new THREE.Vector3(-cuePos.x, 0, -cuePos.z);
       if (toCenter.length() < 0.05) toCenter.set(1, 0, 0);
-      aimDir.copy(toCenter.normalize());
+      toCenter.normalize();
+      aimYaw = Math.atan2(toCenter.x, toCenter.z);
+      syncAimDirFromYaw();
       setShotCamera(cuePos);
       updateTipMarker(cuePos);
       updateAimVisuals(cuePos);
       if (tipGuide) tipGuide.visible = false;
-      statusEl.textContent = '② 방향으로 드래그 조준 · 뒤로 당겨 파워 · 손 떼면 발사';
+      statusEl.textContent = '② 좌우로 천천히 조준 · 뒤로 당겨 파워 · 손 떼면 발사';
     }
 
     function setShotCamera(cuePos) {
-      // 오른손잡이가 큐를 잡고 정면에서 치는 각도
-      const back = aimDir.clone().normalize().multiplyScalar(-1.25);
+      // 오른손잡이 시점 — 조준 중에는 고정(매 프레임 갱신하지 않음)
+      const back = aimDir.clone().normalize().multiplyScalar(-1.35);
       const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), aimDir).normalize();
       camera.position.set(
-        cuePos.x + back.x + right.x * 0.22,
-        cuePos.y + 0.32,
-        cuePos.z + back.z + right.z * 0.22
+        cuePos.x + back.x + right.x * 0.18,
+        cuePos.y + 0.38,
+        cuePos.z + back.z + right.z * 0.18
       );
-      controls.target.set(cuePos.x + aimDir.x * 0.15, cuePos.y, cuePos.z + aimDir.z * 0.15);
+      controls.target.set(cuePos.x + aimDir.x * 0.2, cuePos.y, cuePos.z + aimDir.z * 0.2);
       controls.update();
     }
 
@@ -1100,21 +1147,9 @@
 
       // --- 당점 선택 단계 ---
       if (shotPhase === 'tip') {
-        const hit = raycastCueBall(e);
-        if (hit) {
-          // 카메라에서 본 공 표면 → 당점 (상하좌우)
-          const local = hit.point.clone().sub(cuePos);
-          // 카메라 기준 평면 좌표
-          const toCam = new THREE.Vector3().subVectors(camera.position, cuePos).normalize();
-          const right = new THREE.Vector3().crossVectors(toCam, new THREE.Vector3(0, 1, 0)).normalize();
-          const up = new THREE.Vector3().crossVectors(right, toCam).normalize();
-          let tx = local.dot(right) / BALL_R;
-          let ty = local.dot(up) / BALL_R;
-          const len = Math.hypot(tx, ty);
-          if (len > 0.95) { tx *= 0.95 / len; ty *= 0.95 / len; }
-          tipOffset = { x: tx, y: ty };
-          enterAimPhase();
-        }
+        tipOffset = tipOffsetFromPointer(e, cuePos);
+        updateTipMarker(cuePos);
+        enterAimPhase();
         return;
       }
 
@@ -1123,10 +1158,11 @@
         isAiming = true;
         isCharging = true;
         chargeStart = { x: e.clientX, y: e.clientY };
+        aimDragOrigin = { x: e.clientX, y: e.clientY, yaw: aimYaw };
         controls.enabled = false;
         powerWrap.style.display = 'block';
         document.getElementById('power-label').textContent = 'POWER 0%';
-        statusEl.textContent = '뒤로 드래그하여 파워 조절 · 큐가 같이 당겨집니다';
+        statusEl.textContent = '좌우=조준 · 아래/뒤로 당김=파워 · 손 떼면 발사';
         return;
       }
 
@@ -1147,53 +1183,33 @@
         if (!cue) return;
         const cuePos = new THREE.Vector3().copy(cue.body.translation());
         updateTipGuide(cuePos);
-        // 호버 시 당점 미리보기
-        const hit = raycastCueBall(e);
-        if (hit) {
-          const local = hit.point.clone().sub(cuePos);
-          const toCam = new THREE.Vector3().subVectors(camera.position, cuePos).normalize();
-          const right = new THREE.Vector3().crossVectors(toCam, new THREE.Vector3(0, 1, 0)).normalize();
-          const up = new THREE.Vector3().crossVectors(right, toCam).normalize();
-          let tx = local.dot(right) / BALL_R;
-          let ty = local.dot(up) / BALL_R;
-          const len = Math.hypot(tx, ty);
-          if (len > 0.95) { tx *= 0.95 / len; ty *= 0.95 / len; }
-          tipOffset = { x: tx, y: ty };
-          // aimDir 임시 (카메라 반대 수평)
-          const flat = new THREE.Vector3(-toCam.x, 0, -toCam.z);
-          if (flat.lengthSq() > 0.01) aimDir.copy(flat.normalize());
-          updateTipMarker(cuePos);
-        }
+        tipOffset = tipOffsetFromPointer(e, cuePos);
+        updateTipMarker(cuePos);
         return;
       }
 
-      if (shotPhase !== 'aim' || !isAiming) return;
+      if (shotPhase !== 'aim' || !isAiming || !aimDragOrigin) return;
       const cue = getCueBall();
       if (!cue) return;
       const cuePos = new THREE.Vector3().copy(cue.body.translation());
-      const worldPos = getMouseWorldOnTable(e);
-      if (!worldPos) return;
 
-      // 조준: 마우스 → 공 반대 방향이 타구 방향
-      const dir = cuePos.clone().sub(worldPos);
-      dir.y = 0;
-      if (dir.length() > 0.01) {
-        dir.normalize();
-        aimDir.copy(dir);
-        setShotCamera(cuePos);
-      }
+      // 좌우 드래그 → 조준 각 (감도 낮춤, 카메라 고정)
+      const dx = e.clientX - aimDragOrigin.x;
+      const dy = e.clientY - aimDragOrigin.y;
+      aimYaw = aimDragOrigin.yaw - dx * AIM_TURN_SENS;
+      syncAimDirFromYaw();
 
+      // 뒤로/아래로 당긴 거리 → 파워 (수평 성분은 약하게만 반영)
       if (isCharging && chargeStart) {
-        const dx = e.clientX - chargeStart.x;
-        const dy = e.clientY - chargeStart.y;
-        const drag = Math.sqrt(dx * dx + dy * dy);
-        const sens = Math.max(40, playerSettings.dragSens);
-        currentPower = Math.min(getMaxPower(), drag / sens);
+        const pull = Math.max(0, dy) * 0.85 + Math.abs(dx) * 0.15;
+        const sens = Math.max(50, playerSettings.dragSens * 1.15);
+        currentPower = Math.min(getMaxPower(), pull / sens);
         powerBar.style.width = (currentPower / getMaxPower() * 100) + '%';
         const pct = Math.round((currentPower / getMaxPower()) * 100);
         document.getElementById('power-label').textContent = `POWER ${pct}%`;
       }
 
+      // 카메라는 고정 — 큐/조준선만 갱신
       updateAimVisuals(cuePos);
     }
 
@@ -1225,11 +1241,12 @@
             tipOffset: { ...tipOffset }
           });
         }
-        // 샷 후 카메라 복귀는 공이 멈출 때
+        // 샷 후 카메라 복귀
         shotPhase = 'idle';
         isAiming = false;
         isCharging = false;
         chargeStart = null;
+        aimDragOrigin = null;
         hideAimVisuals();
         controls.enabled = true;
         if (savedCam) {
@@ -1240,12 +1257,14 @@
         }
       } else {
         // 파워 부족 → 조준 유지
+        isAiming = false;
         isCharging = false;
         chargeStart = null;
+        aimDragOrigin = null;
         powerWrap.style.display = 'none';
         currentPower = 0;
         powerBar.style.width = '0%';
-        statusEl.textContent = '② 방향 조준 후 뒤로 당겨 파워를 주세요';
+        statusEl.textContent = '② 다시 눌러 좌우 조준 · 아래로 당겨 파워';
       }
     }
 
