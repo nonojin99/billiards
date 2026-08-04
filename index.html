@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>당구 물리 프로토타입 v0.2</title>
+  <title>당구 - 4구 / 3쿠션</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0a; font-family: system-ui, sans-serif; color: #e0e0e0; }
@@ -310,6 +311,36 @@
       height: 100%; width: 0%; background: linear-gradient(90deg, #22c55e, #eab308, #ef4444);
       border-radius: 7px; transition: width 0.05s linear;
     }
+    #btn-settings {
+      position: absolute; top: 12px; right: 12px; z-index: 15;
+      background: rgba(0,0,0,0.7); border: 1px solid rgba(255,255,255,0.15);
+      color: #e2e8f0; border-radius: 8px; padding: 8px 12px; cursor: pointer;
+      font-size: 0.8rem; backdrop-filter: blur(6px);
+    }
+    #btn-settings:hover { background: rgba(30,40,55,0.9); border-color: #7dd3fc; }
+    #settings-panel {
+      display: none; position: absolute; top: 48px; right: 12px; z-index: 16;
+      width: min(300px, 90vw); background: rgba(15,20,28,0.95);
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
+      padding: 16px; backdrop-filter: blur(10px); color: #e2e8f0;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+    }
+    #settings-panel.open { display: block; }
+    #settings-panel h3 { font-size: 0.95rem; color: #7dd3fc; margin: 0 0 12px; }
+    #settings-panel .set-row { margin-bottom: 14px; }
+    #settings-panel label {
+      display: flex; justify-content: space-between; font-size: 0.78rem;
+      color: #94a3b8; margin-bottom: 6px;
+    }
+    #settings-panel label span.val { color: #f8fafc; font-weight: 600; }
+    #settings-panel input[type=range] { width: 100%; accent-color: #38bdf8; }
+    #settings-panel .set-hint { font-size: 0.7rem; color: #64748b; margin-top: 4px; line-height: 1.35; }
+    #settings-panel .set-actions { display: flex; gap: 8px; margin-top: 12px; }
+    #settings-panel .set-actions button {
+      flex: 1; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12);
+      background: #1e293b; color: #e2e8f0; cursor: pointer; font-size: 0.78rem;
+    }
+    #settings-panel .set-actions button.primary { background: #0ea5e9; border-color: #0284c7; color: #fff; }
   </style>
 </head>
 <body>
@@ -383,13 +414,11 @@
   <canvas id="game-canvas"></canvas>
   <div id="ui">
     <div id="info">
-      <h1>당구 물리 프로토타입 v0.6</h1>
-      <p>마우스 드래그 → 카메라 · 휠 → 줌</p>
-      <p><b>큐볼 근처 클릭 후 뒤로 드래그</b> → 파워 충전 후 발사</p>
-      <p><b>R</b> : 공 리셋 · 점수 유지</p>
-      <p>4구: 빨강+노랑 = +1 · 상대 흰공만 = -1</p>
-      <p>3쿠션: 두 공 모두 + 쿠션 3회 = +1 · 득점 시 연속</p>
-      <p><b>ESC</b> : 파워 충전 취소</p>
+      <h1>당구 물리 프로토타입 v0.8</h1>
+      <p>점선 원 <b>안</b> 클릭 → 샷 · <b>밖</b> 드래그 → 카메라</p>
+      <p>① 당점 · ② 조준 후 당겨 파워 (큐 거리 반영)</p>
+      <p>우상단 <b>설정</b>에서 최대파워·감도·큐 당김 조절</p>
+      <p><b>R</b> 리셋 · <b>ESC</b> 취소</p>
     </div>
     <div id="scoreboard">
       <div class="player-block" id="p1-block">
@@ -408,6 +437,29 @@
   <div id="power-wrap">
     <div id="power-label">POWER</div>
     <div id="power-bar-bg"><div id="power-bar"></div></div>
+  </div>
+  <button type="button" id="btn-settings" title="개인 설정">⚙ 설정</button>
+  <div id="settings-panel" aria-hidden="true">
+    <h3>개인 설정</h3>
+    <div class="set-row">
+      <label>최대 파워 <span class="val" id="set-power-val">100%</span></label>
+      <input type="range" id="set-power-scale" min="30" max="100" step="5" value="100" />
+      <p class="set-hint">샷 최대 세기 (30~100%). 100% = 기본 풀파워.</p>
+    </div>
+    <div class="set-row">
+      <label>충전 감도 <span class="val" id="set-sens-val">보통</span></label>
+      <input type="range" id="set-drag-sens" min="50" max="160" step="5" value="90" />
+      <p class="set-hint">드래그 거리 대비 파워 차는 속도. 낮을수록 조금만 당겨도 파워가 참.</p>
+    </div>
+    <div class="set-row">
+      <label>큐 당김 연출 <span class="val" id="set-pull-val">100%</span></label>
+      <input type="range" id="set-cue-pull" min="50" max="150" step="5" value="100" />
+      <p class="set-hint">파워에 따라 큐가 뒤로 빠지는 거리 연출 강도.</p>
+    </div>
+    <div class="set-actions">
+      <button type="button" id="set-reset">기본값</button>
+      <button type="button" class="primary" id="set-close">닫기</button>
+    </div>
   </div>
 
   <script type="importmap">
@@ -445,10 +497,32 @@
     const CUSHION_REST = 0.82;          // 쿠션 반발계수 (실측 효과값 0.80~0.85)
     const FRICTION = 0.20;              // 쿠션 마찰 (Mathavan μ≈0.14, 실사용 0.15~0.22)
 
-    const MAX_POWER = 2.88;  // 4구 기준
+    // 이전 100%의 80%를 새 100%로 기준
+    const MAX_POWER = 2.304;
+    // 개인 설정 (localStorage)
+    const playerSettings = {
+      powerScale: 1.0,   // 0.3~1.0 최대 파워 배율
+      dragSens: 90,      // 픽셀당 파워 (작을수록 민감)
+      cuePull: 1.0       // 큐 당김 연출 배율
+    };
+    function loadPlayerSettings() {
+      try {
+        const raw = localStorage.getItem('billiards_settings');
+        if (!raw) return;
+        const o = JSON.parse(raw);
+        if (o.powerScale != null) playerSettings.powerScale = Math.min(1.0, Math.max(0.3, o.powerScale));
+        if (o.dragSens) playerSettings.dragSens = Math.min(160, Math.max(50, o.dragSens));
+        if (o.cuePull) playerSettings.cuePull = Math.min(1.5, Math.max(0.5, o.cuePull));
+      } catch (_) {}
+    }
+    function savePlayerSettings() {
+      try {
+        localStorage.setItem('billiards_settings', JSON.stringify(playerSettings));
+      } catch (_) {}
+    }
     function getMaxPower() {
-      // 3쿠션은 4구 대비 80%
-      return gameMode === 'three_cushion' ? MAX_POWER * 0.8 : MAX_POWER;
+      const modeMul = gameMode === 'three_cushion' ? 0.8 : 1;
+      return MAX_POWER * modeMul * playerSettings.powerScale;
     }
     const COLORS = { cue: 0xffffff, yellow: 0xffc107, red: 0xe53935, white2: 0xf0f0f0 };
 
@@ -457,11 +531,19 @@
     const balls = [];
     let aimLine = null;
     let cueStick = null;
+    let playRing = null;       // 큐볼 주변 점선 원
+    let tipMarker = null;      // 당점 표시
+    let tipGuide = null;       // 당점 선택용 공 앞면 가이드
     let isAiming = false;
     let isCharging = false;
     let chargeStart = null;
     let currentPower = 0;
     let aimDir = new THREE.Vector3(1, 0, 0);
+    // idle | tip | aim  — 샷 단계
+    let shotPhase = 'idle';
+    // 당점: x=좌(-)~우(+), y=하(-)~상(+)  / -1~1
+    let tipOffset = { x: 0, y: 0 };
+    let savedCam = null;       // 샷 카메라 복귀용
     let SCORE_TARGET = 10;
     let scores = { 1: 0, 2: 0 };
     let needConfirm = { 1: false, 2: false }; // 마지막 알 이후 확인 득점 필요
@@ -541,6 +623,19 @@
 
       window.addEventListener('resize', onResize);
       window.addEventListener('keydown', onKey);
+      // capture: 점선 원 안 클릭 시 카메라 조작 선제 차단
+      canvas.addEventListener('pointerdown', (e) => {
+        if (shotPhase !== 'idle') return;
+        if (!allBallsSleeping() || winner) return;
+        if (isOnline && currentPlayer !== myPlayerSlot) return;
+        const cue = getCueBall();
+        if (!cue) return;
+        const worldPos = getMouseWorldOnTable(e);
+        if (!worldPos) return;
+        const t = cue.body.translation();
+        const dist = Math.hypot(worldPos.x - t.x, worldPos.z - t.z);
+        if (dist <= BALL_R * 3.2) controls.enabled = false;
+      }, true);
       canvas.addEventListener('pointerdown', onPointerDown);
       canvas.addEventListener('pointermove', onPointerMove);
       canvas.addEventListener('pointerup', onPointerUp);
@@ -697,19 +792,17 @@
 
     // ========== Aim visuals ==========
     function createAimVisuals() {
-      // Aim line (length/color change with power)
       const lineGeo = new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(0, 0, 0),
         new THREE.Vector3(1, 0, 0)
       ]);
       aimLine = new THREE.Line(
         lineGeo,
-        new THREE.LineBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.9, linewidth: true })
+        new THREE.LineBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.9 })
       );
       aimLine.visible = false;
       scene.add(aimLine);
 
-      // Cue stick: default Cylinder along +Y, we orient with quaternion
       const stickGeo = new THREE.CylinderGeometry(0.007, 0.011, 1.2, 10);
       cueStick = new THREE.Mesh(
         stickGeo,
@@ -717,43 +810,241 @@
       );
       cueStick.visible = false;
       scene.add(cueStick);
+
+      // 플레이 가능 영역 점선 원
+      const ringPts = [];
+      const ringR = BALL_R * 3.2;
+      for (let i = 0; i <= 64; i++) {
+        const a = (i / 64) * Math.PI * 2;
+        ringPts.push(new THREE.Vector3(Math.cos(a) * ringR, 0.002, Math.sin(a) * ringR));
+      }
+      playRing = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(ringPts),
+        new THREE.LineDashedMaterial({
+          color: 0x7dd3fc, transparent: true, opacity: 0.75,
+          dashSize: 0.025, gapSize: 0.018
+        })
+      );
+      playRing.computeLineDistances();
+      playRing.visible = false;
+      scene.add(playRing);
+
+      // 당점 마커
+      tipMarker = new THREE.Mesh(
+        new THREE.SphereGeometry(BALL_R * 0.18, 12, 12),
+        new THREE.MeshBasicMaterial({ color: 0xff4444 })
+      );
+      tipMarker.visible = false;
+      scene.add(tipMarker);
+
+      // 당점 가이드 (공 앞면 원 + 십자)
+      const guideGrp = new THREE.Group();
+      const face = new THREE.Mesh(
+        new THREE.CircleGeometry(BALL_R * 0.95, 32),
+        new THREE.MeshBasicMaterial({
+          color: 0xffffff, transparent: true, opacity: 0.2,
+          side: THREE.DoubleSide, depthTest: false
+        })
+      );
+      guideGrp.add(face);
+      const crossMat = new THREE.LineBasicMaterial({ color: 0xffcc00, transparent: true, opacity: 0.7, depthTest: false });
+      const hCross = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-BALL_R * 0.85, 0, 0.001),
+        new THREE.Vector3(BALL_R * 0.85, 0, 0.001)
+      ]);
+      const vCross = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, -BALL_R * 0.85, 0.001),
+        new THREE.Vector3(0, BALL_R * 0.85, 0.001)
+      ]);
+      guideGrp.add(new THREE.Line(hCross, crossMat));
+      guideGrp.add(new THREE.Line(vCross, crossMat));
+      // 상하좌우 라벨 느낌의 작은 점
+      [[0, 0.7], [0, -0.7], [-0.7, 0], [0.7, 0]].forEach(([lx, ly]) => {
+        const dot = new THREE.Mesh(
+          new THREE.CircleGeometry(BALL_R * 0.08, 8),
+          new THREE.MeshBasicMaterial({ color: 0xffcc00, transparent: true, opacity: 0.85, depthTest: false })
+        );
+        dot.position.set(lx * BALL_R, ly * BALL_R, 0.002);
+        guideGrp.add(dot);
+      });
+      tipGuide = guideGrp;
+      tipGuide.visible = false;
+      scene.add(tipGuide);
+    }
+
+    function updatePlayRing() {
+      if (!playRing) return;
+      const canPlay = allBallsSleeping() && !winner && shotPhase === 'idle' &&
+        (!isOnline || currentPlayer === myPlayerSlot);
+      const cue = getCueBall();
+      if (!canPlay || !cue) {
+        playRing.visible = false;
+        return;
+      }
+      const t = cue.body.translation();
+      playRing.position.set(t.x, 0.002, t.z);
+      playRing.visible = true;
+    }
+
+    function updateTipMarker(cuePos) {
+      if (!tipMarker) return;
+      // 당점을 공 표면(조준 반대쪽 = 큐가 맞는 면)에 표시
+      const back = aimDir.clone().normalize().multiplyScalar(-1);
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), back).normalize();
+      const up = new THREE.Vector3().crossVectors(back, right).normalize();
+      const ox = tipOffset.x * BALL_R * 0.85;
+      const oy = tipOffset.y * BALL_R * 0.85;
+      tipMarker.position.set(
+        cuePos.x + back.x * BALL_R + right.x * ox + up.x * oy,
+        cuePos.y + back.y * BALL_R + right.y * ox + up.y * oy,
+        cuePos.z + back.z * BALL_R + right.z * ox + up.z * oy
+      );
+      tipMarker.visible = true;
+    }
+
+    function updateTipGuide(cuePos) {
+      if (!tipGuide) return;
+      // 카메라를 향한 공 앞면에 가이드 배치
+      const toCam = new THREE.Vector3().subVectors(camera.position, cuePos).normalize();
+      tipGuide.position.copy(cuePos).add(toCam.clone().multiplyScalar(BALL_R * 1.05));
+      tipGuide.lookAt(camera.position);
+      tipGuide.visible = shotPhase === 'tip';
     }
 
     function updateAimVisuals(cuePos) {
       if (!aimLine || !cueStick) return;
 
-      const powerRatio = Math.min(1, currentPower / getMaxPower());
-      // 파워에 따라 조준선 길이 + 색
+      const maxP = getMaxPower();
+      const powerRatio = maxP > 0 ? Math.min(1, currentPower / maxP) : 0;
       const len = 0.45 + powerRatio * 1.1;
       const start = cuePos.clone();
-      start.y = BALL_R + 0.003;
+      start.y = cuePos.y;
       const end = start.clone().add(aimDir.clone().multiplyScalar(len));
 
       aimLine.geometry.setFromPoints([start, end]);
       aimLine.geometry.attributes.position.needsUpdate = true;
-      // 초록 → 노랑 → 빨강
       const c = new THREE.Color();
       if (powerRatio < 0.5) c.setRGB(0.2 + powerRatio, 0.85, 0.4);
       else c.setRGB(0.9, 0.85 - (powerRatio - 0.5) * 1.2, 0.15);
       aimLine.material.color.copy(c);
       aimLine.material.opacity = 0.55 + powerRatio * 0.4;
-      aimLine.visible = true;
+      aimLine.visible = shotPhase === 'aim';
 
-      // 큐 스틱: aimDir 반대쪽에 배치, +Y축을 aimDir로 회전
-      const back = aimDir.clone().multiplyScalar(-(0.72 + powerRatio * 0.35));
-      cueStick.position.set(cuePos.x + back.x, BALL_R + 0.012, cuePos.z + back.z);
-      const yAxis = new THREE.Vector3(0, 1, 0);
-      const dir = aimDir.clone().normalize();
-      cueStick.quaternion.setFromUnitVectors(yAxis, dir);
-      cueStick.visible = true;
+      // 파워에 비례해 큐를 뒤로 당김 (기본 근접 → 풀스윙)
+      // stick 길이 1.2, 중심 기준이므로 tip까지 약 0.6
+      const tipGap = 0.04; // 당점까지 최소 간격
+      const basePull = 0.58 + tipGap; // 파워 0일 때 큐 중심~공
+      const extraPull = (0.15 + powerRatio * 0.72) * playerSettings.cuePull;
+      const powerPull = basePull + extraPull;
+      const back = aimDir.clone().normalize().multiplyScalar(-powerPull);
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), aimDir).normalize();
+      // 오른손잡이: 살짝 오른쪽·위
+      const handLift = 0.018 + Math.abs(tipOffset.y) * 0.012;
+      cueStick.position.set(
+        cuePos.x + back.x + right.x * 0.045,
+        cuePos.y + handLift,
+        cuePos.z + back.z + right.z * 0.045
+      );
+      // 큐 끝이 당점을 향하도록
+      if (shotPhase === 'aim') updateTipMarker(cuePos);
+      const tipWorld = tipMarker && tipMarker.visible ? tipMarker.position.clone() : cuePos.clone();
+      const stickDir = new THREE.Vector3().subVectors(tipWorld, cueStick.position).normalize();
+      if (stickDir.lengthSq() > 0.01) {
+        cueStick.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), stickDir);
+      } else {
+        cueStick.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), aimDir.clone().normalize());
+      }
+      cueStick.visible = shotPhase === 'aim';
     }
 
     function hideAimVisuals() {
       if (aimLine) aimLine.visible = false;
       if (cueStick) cueStick.visible = false;
+      if (tipMarker) tipMarker.visible = false;
+      if (tipGuide) tipGuide.visible = false;
       powerWrap.style.display = 'none';
       currentPower = 0;
       powerBar.style.width = '0%';
+    }
+
+    function resetShotPhase() {
+      shotPhase = 'idle';
+      isAiming = false;
+      isCharging = false;
+      chargeStart = null;
+      tipOffset = { x: 0, y: 0 };
+      controls.enabled = true;
+      hideAimVisuals();
+      if (savedCam) {
+        camera.position.copy(savedCam.pos);
+        controls.target.copy(savedCam.target);
+        controls.update();
+        savedCam = null;
+      }
+    }
+
+    // 당점 → 토크 (상=전진회전, 하=당김, 좌우=사이드)
+    function tipToTorque(power) {
+      const dir = aimDir.clone().normalize();
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
+      const spin = power * 0.022;
+      // tipOffset.y > 0 상단 → topspin (전진), < 0 하단 → backspin
+      // tipOffset.x > 0 우측 → 우측 사이드, < 0 좌측
+      return {
+        x: right.x * (-tipOffset.y) * spin + dir.x * tipOffset.x * spin * 0.25,
+        y: tipOffset.x * spin * 1.35,
+        z: right.z * (-tipOffset.y) * spin + dir.z * tipOffset.x * spin * 0.25
+      };
+    }
+
+    function enterTipPhase() {
+      shotPhase = 'tip';
+      tipOffset = { x: 0, y: 0 };
+      controls.enabled = false;
+      const cue = getCueBall();
+      if (!cue) return;
+      const cuePos = new THREE.Vector3().copy(cue.body.translation());
+      savedCam = { pos: camera.position.clone(), target: controls.target.clone() };
+      // 공 포커스
+      const camPos = cuePos.clone().add(new THREE.Vector3(0.35, 0.28, 0.45));
+      camera.position.copy(camPos);
+      controls.target.copy(cuePos);
+      controls.update();
+      updateTipGuide(cuePos);
+      if (playRing) playRing.visible = false;
+      statusEl.textContent = '① 당점 선택: 공 위(상단=밀기 · 하단=끌기 · 좌우=사이드)';
+    }
+
+    function enterAimPhase() {
+      shotPhase = 'aim';
+      isAiming = true;
+      isCharging = false;
+      currentPower = 0;
+      const cue = getCueBall();
+      if (!cue) return;
+      const cuePos = new THREE.Vector3().copy(cue.body.translation());
+      // 초기 조준: 테이블 중심 쪽
+      const toCenter = new THREE.Vector3(-cuePos.x, 0, -cuePos.z);
+      if (toCenter.length() < 0.05) toCenter.set(1, 0, 0);
+      aimDir.copy(toCenter.normalize());
+      setShotCamera(cuePos);
+      updateTipMarker(cuePos);
+      updateAimVisuals(cuePos);
+      if (tipGuide) tipGuide.visible = false;
+      statusEl.textContent = '② 방향으로 드래그 조준 · 뒤로 당겨 파워 · 손 떼면 발사';
+    }
+
+    function setShotCamera(cuePos) {
+      // 오른손잡이가 큐를 잡고 정면에서 치는 각도
+      const back = aimDir.clone().normalize().multiplyScalar(-1.25);
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), aimDir).normalize();
+      camera.position.set(
+        cuePos.x + back.x + right.x * 0.22,
+        cuePos.y + 0.32,
+        cuePos.z + back.z + right.z * 0.22
+      );
+      controls.target.set(cuePos.x + aimDir.x * 0.15, cuePos.y, cuePos.z + aimDir.z * 0.15);
+      controls.update();
     }
 
     // ========== Input ==========
@@ -780,6 +1071,21 @@
       return target;
     }
 
+    function getMouseNdc(e) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    }
+
+    function raycastCueBall(e) {
+      const cue = getCueBall();
+      if (!cue) return null;
+      getMouseNdc(e);
+      raycaster.setFromCamera(mouse, camera);
+      const hits = raycaster.intersectObject(cue.mesh, false);
+      return hits.length ? hits[0] : null;
+    }
+
     function onPointerDown(e) {
       if (!document.getElementById('lobby').classList.contains('hidden')) return;
       if (winner) return;
@@ -787,57 +1093,112 @@
         statusEl.textContent = '상대 차례입니다';
         return;
       }
-      if (!allBallsSleeping()) return;
+      if (!allBallsSleeping() && shotPhase === 'idle') return;
       const cue = getCueBall();
       if (!cue) return;
-
-      const worldPos = getMouseWorldOnTable(e);
-      if (!worldPos) return;
-
       const cuePos = new THREE.Vector3().copy(cue.body.translation());
-      const dist = worldPos.distanceTo(cuePos);
 
-      // Only start aiming if click is reasonably near the cue ball
-      if (dist < 0.55) {
+      // --- 당점 선택 단계 ---
+      if (shotPhase === 'tip') {
+        const hit = raycastCueBall(e);
+        if (hit) {
+          // 카메라에서 본 공 표면 → 당점 (상하좌우)
+          const local = hit.point.clone().sub(cuePos);
+          // 카메라 기준 평면 좌표
+          const toCam = new THREE.Vector3().subVectors(camera.position, cuePos).normalize();
+          const right = new THREE.Vector3().crossVectors(toCam, new THREE.Vector3(0, 1, 0)).normalize();
+          const up = new THREE.Vector3().crossVectors(right, toCam).normalize();
+          let tx = local.dot(right) / BALL_R;
+          let ty = local.dot(up) / BALL_R;
+          const len = Math.hypot(tx, ty);
+          if (len > 0.95) { tx *= 0.95 / len; ty *= 0.95 / len; }
+          tipOffset = { x: tx, y: ty };
+          enterAimPhase();
+        }
+        return;
+      }
+
+      // --- 조준/파워 단계: 드래그 시작 ---
+      if (shotPhase === 'aim') {
         isAiming = true;
         isCharging = true;
         chargeStart = { x: e.clientX, y: e.clientY };
-        controls.enabled = false; // temporarily disable orbit while charging
+        controls.enabled = false;
         powerWrap.style.display = 'block';
-        statusEl.textContent = '뒤로 드래그하여 파워 조절 후 손을 떼세요';
+        document.getElementById('power-label').textContent = 'POWER 0%';
+        statusEl.textContent = '뒤로 드래그하여 파워 조절 · 큐가 같이 당겨집니다';
+        return;
       }
+
+      // --- idle: 점선 원 안이면 당점, 밖이면 카메라 ---
+      const worldPos = getMouseWorldOnTable(e);
+      if (!worldPos) return;
+      const dist = Math.hypot(worldPos.x - cuePos.x, worldPos.z - cuePos.z);
+      const playR = BALL_R * 3.2;
+      if (dist <= playR) {
+        enterTipPhase();
+      }
+      // else: OrbitControls가 카메라 회전 처리
     }
 
     function onPointerMove(e) {
-      if (!isAiming) return;
+      if (shotPhase === 'tip') {
+        const cue = getCueBall();
+        if (!cue) return;
+        const cuePos = new THREE.Vector3().copy(cue.body.translation());
+        updateTipGuide(cuePos);
+        // 호버 시 당점 미리보기
+        const hit = raycastCueBall(e);
+        if (hit) {
+          const local = hit.point.clone().sub(cuePos);
+          const toCam = new THREE.Vector3().subVectors(camera.position, cuePos).normalize();
+          const right = new THREE.Vector3().crossVectors(toCam, new THREE.Vector3(0, 1, 0)).normalize();
+          const up = new THREE.Vector3().crossVectors(right, toCam).normalize();
+          let tx = local.dot(right) / BALL_R;
+          let ty = local.dot(up) / BALL_R;
+          const len = Math.hypot(tx, ty);
+          if (len > 0.95) { tx *= 0.95 / len; ty *= 0.95 / len; }
+          tipOffset = { x: tx, y: ty };
+          // aimDir 임시 (카메라 반대 수평)
+          const flat = new THREE.Vector3(-toCam.x, 0, -toCam.z);
+          if (flat.lengthSq() > 0.01) aimDir.copy(flat.normalize());
+          updateTipMarker(cuePos);
+        }
+        return;
+      }
+
+      if (shotPhase !== 'aim' || !isAiming) return;
       const cue = getCueBall();
       if (!cue) return;
-
       const cuePos = new THREE.Vector3().copy(cue.body.translation());
       const worldPos = getMouseWorldOnTable(e);
       if (!worldPos) return;
 
-      // Aim direction = from mouse to cue (so dragging back aims forward)
+      // 조준: 마우스 → 공 반대 방향이 타구 방향
       const dir = cuePos.clone().sub(worldPos);
       dir.y = 0;
-      if (dir.length() < 0.01) return;
-      dir.normalize();
-      aimDir.copy(dir);
+      if (dir.length() > 0.01) {
+        dir.normalize();
+        aimDir.copy(dir);
+        setShotCamera(cuePos);
+      }
 
-      // Power from drag distance
       if (isCharging && chargeStart) {
         const dx = e.clientX - chargeStart.x;
         const dy = e.clientY - chargeStart.y;
         const drag = Math.sqrt(dx * dx + dy * dy);
-        currentPower = Math.min(getMaxPower(), drag / 90);
+        const sens = Math.max(40, playerSettings.dragSens);
+        currentPower = Math.min(getMaxPower(), drag / sens);
         powerBar.style.width = (currentPower / getMaxPower() * 100) + '%';
+        const pct = Math.round((currentPower / getMaxPower()) * 100);
+        document.getElementById('power-label').textContent = `POWER ${pct}%`;
       }
 
       updateAimVisuals(cuePos);
     }
 
     function onPointerUp(e) {
-      if (!isCharging) return;
+      if (shotPhase !== 'aim' || !isCharging) return;
 
       const cue = getCueBall();
       if (cue && currentPower > 0.15) {
@@ -846,32 +1207,46 @@
           y: 0,
           z: aimDir.z * currentPower
         };
+        const torque = tipToTorque(currentPower);
         cue.body.applyImpulse(impulse, true);
-        cue.body.applyTorqueImpulse({
-          x: (Math.random() - 0.5) * 0.008,
-          y: 0,
-          z: (Math.random() - 0.5) * 0.008
-        }, true);
+        cue.body.applyTorqueImpulse(torque, true);
         shotActive = true;
         ballsHitThisShot.clear();
         prevDistances = {};
         cushionHitsThisShot = 0;
-        statusEl.textContent = `샷! 파워 ${currentPower.toFixed(1)}`;
+        const tipDesc = tipOffset.y > 0.25 ? '상단' : tipOffset.y < -0.25 ? '하단' :
+          Math.abs(tipOffset.x) > 0.25 ? (tipOffset.x > 0 ? '우측' : '좌측') : '중앙';
+        statusEl.textContent = `샷! 파워 ${currentPower.toFixed(1)} · 당점 ${tipDesc}`;
         if (isOnline) {
           broadcast('shot', {
             player: currentPlayer,
-            impulse: { x: impulse.x, y: 0, z: impulse.z }
+            impulse: { x: impulse.x, y: 0, z: impulse.z },
+            torque,
+            tipOffset: { ...tipOffset }
           });
         }
+        // 샷 후 카메라 복귀는 공이 멈출 때
+        shotPhase = 'idle';
+        isAiming = false;
+        isCharging = false;
+        chargeStart = null;
+        hideAimVisuals();
+        controls.enabled = true;
+        if (savedCam) {
+          camera.position.copy(savedCam.pos);
+          controls.target.copy(savedCam.target);
+          controls.update();
+          savedCam = null;
+        }
       } else {
-        statusEl.textContent = '준비 완료 · 큐볼 근처 클릭 후 드래그하여 샷';
+        // 파워 부족 → 조준 유지
+        isCharging = false;
+        chargeStart = null;
+        powerWrap.style.display = 'none';
+        currentPower = 0;
+        powerBar.style.width = '0%';
+        statusEl.textContent = '② 방향 조준 후 뒤로 당겨 파워를 주세요';
       }
-
-      isAiming = false;
-      isCharging = false;
-      chargeStart = null;
-      controls.enabled = true;
-      hideAimVisuals();
     }
 
 
@@ -1033,14 +1408,9 @@
     function onKey(e) {
       if (e.code === 'KeyR') resetBalls();
       if (e.code === 'Escape') {
-        if (isCharging || isAiming) {
-          isAiming = false;
-          isCharging = false;
-          chargeStart = null;
-          currentPower = 0;
-          controls.enabled = true;
-          hideAimVisuals();
-          statusEl.textContent = '충전 취소 · 다시 조준하세요';
+        if (shotPhase !== 'idle' || isCharging || isAiming) {
+          resetShotPhase();
+          statusEl.textContent = '취소됨 · 점선 원 안을 클릭하여 다시 시작';
         }
       }
     }
@@ -1078,13 +1448,10 @@
         b.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
         b.body.wakeUp();
       });
-      hideAimVisuals();
+      resetShotPhase();
       shotActive = false;
       ballsHitThisShot.clear();
       cushionHitsThisShot = 0;
-      isAiming = false;
-      isCharging = false;
-      controls.enabled = true;
       createBallLabels();
       statusEl.textContent = '공 리셋 · 점수/차례 유지';
       updateScoreUI();
@@ -1190,11 +1557,12 @@
       endShotIfNeeded();
       updateBallLabelPositions();
       updateBallLabelText();
+      updatePlayRing();
 
-      if (!isCharging && !isAiming && !shotActive) {
+      if (shotPhase === 'idle' && !shotActive) {
         if (allBallsSleeping()) {
           if (statusEl.textContent.includes('이동')) {
-            statusEl.textContent = '준비 완료 · 큐볼 근처 클릭 후 드래그하여 샷';
+            statusEl.textContent = '준비 · 점선 원 안 클릭(당점) · 원 밖은 카메라';
           }
         }
       } else if (shotActive && !allBallsSleeping()) {
@@ -1282,7 +1650,9 @@
     }
 
 
-    function runCoinToss() {
+    function runCoinToss(opts = {}) {
+      const forcedFirst = opts.forcedFirst || null;
+      const waitForRemote = !!opts.waitForRemote;
       return new Promise((resolve) => {
         const overlay = document.getElementById('coin-toss');
         const result = document.getElementById('toss-result');
@@ -1294,7 +1664,7 @@
 
         overlay.classList.add('show');
         result.classList.remove('reveal');
-        result.textContent = '코인 토스 중...';
+        result.textContent = waitForRemote ? '호스트와 함께 토스 중...' : '코인 토스 중...';
         result.style.color = '#94a3b8';
         btn.classList.remove('show');
 
@@ -1452,26 +1822,34 @@
 
             if (settled > 30 || performance.now() - t0 > 5500) {
               finished = true;
-              const first = whichFace();
-              currentPlayer = first;
-              spawnTossSparks();
-              result.textContent = playerNames[first] + ' 선공!';
-              result.classList.add('reveal');
-              result.style.color = first === 1 ? '#fde68a' : '#7dd3fc';
-              btn.classList.add('show');
-              btn.onclick = () => {
-                overlay.classList.remove('show');
-                try {
-                  tRen.dispose();
-                  coinGeo.dispose();
-                  matSide.dispose(); matFront.dispose(); matBack.dispose();
-                  if (matFront.map) matFront.map.dispose();
-                  if (matBack.map) matBack.map.dispose();
-                } catch (_) {}
-                resolve(first);
+              const finishWith = (first) => {
+                currentPlayer = first;
+                spawnTossSparks();
+                result.textContent = playerNames[first] + ' 선공!';
+                result.classList.add('reveal');
+                result.style.color = first === 1 ? '#fde68a' : '#7dd3fc';
+                btn.classList.add('show');
+                btn.onclick = () => {
+                  overlay.classList.remove('show');
+                  try {
+                    tRen.dispose();
+                    coinGeo.dispose();
+                    matSide.dispose(); matFront.dispose(); matBack.dispose();
+                    if (matFront.map) matFront.map.dispose();
+                    if (matBack.map) matBack.map.dispose();
+                  } catch (_) {}
+                  resolve(first);
+                };
+                tRen.render(tScene, tCam);
               };
-              // 결과 화면 유지용 한 번 더
-              tRen.render(tScene, tCam);
+              if (waitForRemote) {
+                result.textContent = '결과 대기 중...';
+                window.__resolveRemoteToss = (first) => finishWith(first);
+                // 호스트 결과가 이미 왔을 수도 있음
+                return;
+              }
+              const first = forcedFirst || whichFace();
+              finishWith(first);
               return;
             }
             requestAnimationFrame(frame);
@@ -1513,6 +1891,10 @@
         y: 0,
         z: payload.impulse.z
       }, true);
+      if (payload.torque) {
+        ball.body.applyTorqueImpulse(payload.torque, true);
+      }
+      if (payload.tipOffset) tipOffset = payload.tipOffset;
       shotActive = true;
       ballsHitThisShot.clear();
       prevDistances = {};
@@ -1539,10 +1921,31 @@
           statusEl.textContent = `${playerNames[2]} 입장! 게임을 시작합니다...`;
           beginGameAfterLobby(code);
         })
+        .on('broadcast', { event: 'toss_start' }, ({ payload }) => {
+          if (isHost) return;
+          // 게스트: 호스트와 동시에 코인 토스 화면
+          if (payload.names) playerNames = payload.names;
+          if (payload.gameMode) {
+            gameMode = payload.gameMode;
+            if (gameMode === 'three_cushion') {
+              PLAYER_CUE[1] = 'cue';
+              PLAYER_CUE[2] = 'yellow';
+            } else {
+              PLAYER_CUE[1] = 'cue';
+              PLAYER_CUE[2] = 'white2';
+            }
+          }
+          if (payload.SCORE_TARGET) SCORE_TARGET = payload.SCORE_TARGET;
+          document.getElementById('lobby').classList.add('hidden');
+          resetBalls();
+          updateBallLabelText();
+          // 결과 없이 연출만 (호스트 결과 대기)
+          runCoinToss({ waitForRemote: true });
+        })
         .on('broadcast', { event: 'host_start' }, ({ payload }) => {
           if (isHost) return;
-          gameMode = payload.gameMode || 'fourball';
-          SCORE_TARGET = payload.SCORE_TARGET || 10;
+          gameMode = payload.gameMode || gameMode || 'fourball';
+          SCORE_TARGET = payload.SCORE_TARGET || SCORE_TARGET || 10;
           playerNames = payload.names || playerNames;
           if (gameMode === 'three_cushion') {
             PLAYER_CUE[1] = 'cue';
@@ -1555,7 +1958,16 @@
           resetBalls();
           updateBallLabelText();
           currentPlayer = payload.first || 1;
+          // 게스트 토스 화면에 결과 확정
+          if (window.__resolveRemoteToss) {
+            window.__resolveRemoteToss(currentPlayer);
+            window.__resolveRemoteToss = null;
+          } else {
+            // toss_start를 못 받은 경우 결과만 짧게 표시
+            runCoinToss({ forcedFirst: currentPlayer });
+          }
           updateScoreUI();
+          updateBallLabelText();
           statusEl.textContent = `방 ${code} · 온라인 · ${playerNames[currentPlayer]} 선공`;
         })
         .on('broadcast', { event: 'shot' }, ({ payload }) => {
@@ -1583,13 +1995,21 @@
       document.getElementById('lobby').classList.add('hidden');
       resetBalls();
       updateBallLabelText();
+      // 온라인: 게스트에게 토스 시작을 먼저 알림
+      if (isOnline && isHost) {
+        await broadcast('toss_start', {
+          names: playerNames,
+          gameMode,
+          SCORE_TARGET
+        });
+      }
       const first = await runCoinToss();
       currentPlayer = first;
       updateScoreUI();
       updateBallLabelText();
       statusEl.textContent = `방 ${code} · ${gameMode === 'three_cushion' ? '3쿠션' : '4구'} · ${SCORE_TARGET}점 · ${playerNames[first]} 선공`;
       if (isOnline && isHost) {
-        broadcast('host_start', {
+        await broadcast('host_start', {
           gameMode,
           SCORE_TARGET,
           names: playerNames,
@@ -1687,6 +2107,66 @@
     document.getElementById('btn-create').addEventListener('click', startOnlineHost);
     document.getElementById('btn-join-local').addEventListener('click', startLocalGame);
     document.getElementById('btn-join-online').addEventListener('click', joinOnlineRoom);
+
+    // ----- 개인 설정 UI -----
+    function sensLabel(v) {
+      if (v <= 65) return '매우 민감';
+      if (v <= 85) return '민감';
+      if (v <= 110) return '보통';
+      if (v <= 135) return '둔감';
+      return '매우 둔감';
+    }
+    function refreshSettingsUI() {
+      const ps = document.getElementById('set-power-scale');
+      const ds = document.getElementById('set-drag-sens');
+      const cp = document.getElementById('set-cue-pull');
+      if (!ps) return;
+      ps.value = Math.round(playerSettings.powerScale * 100);
+      ds.value = playerSettings.dragSens;
+      cp.value = Math.round(playerSettings.cuePull * 100);
+      document.getElementById('set-power-val').textContent = ps.value + '%';
+      document.getElementById('set-sens-val').textContent = sensLabel(+ds.value);
+      document.getElementById('set-pull-val').textContent = cp.value + '%';
+    }
+    function bindSettingsUI() {
+      const panel = document.getElementById('settings-panel');
+      const btn = document.getElementById('btn-settings');
+      loadPlayerSettings();
+      refreshSettingsUI();
+      btn.addEventListener('click', () => {
+        const open = !panel.classList.contains('open');
+        panel.classList.toggle('open', open);
+        panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+        if (open) refreshSettingsUI();
+      });
+      document.getElementById('set-close').addEventListener('click', () => {
+        panel.classList.remove('open');
+        panel.setAttribute('aria-hidden', 'true');
+      });
+      document.getElementById('set-reset').addEventListener('click', () => {
+        playerSettings.powerScale = 1;
+        playerSettings.dragSens = 90;
+        playerSettings.cuePull = 1;
+        savePlayerSettings();
+        refreshSettingsUI();
+      });
+      document.getElementById('set-power-scale').addEventListener('input', (e) => {
+        playerSettings.powerScale = (+e.target.value) / 100;
+        document.getElementById('set-power-val').textContent = e.target.value + '%';
+        savePlayerSettings();
+      });
+      document.getElementById('set-drag-sens').addEventListener('input', (e) => {
+        playerSettings.dragSens = +e.target.value;
+        document.getElementById('set-sens-val').textContent = sensLabel(+e.target.value);
+        savePlayerSettings();
+      });
+      document.getElementById('set-cue-pull').addEventListener('input', (e) => {
+        playerSettings.cuePull = (+e.target.value) / 100;
+        document.getElementById('set-pull-val').textContent = e.target.value + '%';
+        savePlayerSettings();
+      });
+    }
+    bindSettingsUI();
 
     init().catch(e => {
       console.error(e);
